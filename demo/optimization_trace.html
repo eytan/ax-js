@@ -5120,6 +5120,149 @@ var Ax;
     }
     redraw();
   }
+  function computeKernelRels(predictor, dots, activeIdx, outcome) {
+    const rawRels = [];
+    let maxRel = 0;
+    for (let i = 0; i < dots.length; i++) {
+      if (i === activeIdx) {
+        rawRels.push(1);
+        continue;
+      }
+      const r = predictor.kernelCorrelation(dots[i].pt, dots[activeIdx].pt, outcome);
+      rawRels.push(r);
+      if (r > maxRel) maxRel = r;
+    }
+    return { raw: rawRels, max: maxRel };
+  }
+  function applyDotHighlight(dots, activeIdx, rels) {
+    for (let i = 0; i < dots.length; i++) {
+      const d = dots[i];
+      if (i === activeIdx) {
+        d.el.setAttribute("fill", "rgba(255,80,80,0.95)");
+        d.el.setAttribute("stroke", "rgba(255,255,255,1)");
+        d.el.setAttribute("stroke-width", "2");
+        d.el.setAttribute("r", String(d.defaultR + 2));
+        if (d.whisker) d.whisker.setAttribute("stroke", "rgba(255,80,80,0.5)");
+      } else {
+        const relNorm = rels.max > 0 ? rels.raw[i] / rels.max : 0;
+        const fa = Math.max(0.08, Math.min(0.9, Math.sqrt(relNorm)));
+        d.el.setAttribute("fill", `rgba(255,80,80,${fa.toFixed(3)})`);
+        d.el.setAttribute("stroke", `rgba(255,255,255,${Math.max(0.15, fa * 0.6).toFixed(3)})`);
+        d.el.setAttribute("stroke-width", "1");
+        d.el.setAttribute("r", String(d.defaultR));
+        if (d.whisker) d.whisker.setAttribute("stroke", `rgba(255,80,80,${(fa * 0.35).toFixed(3)})`);
+      }
+    }
+  }
+  function clearDotHighlight(dots) {
+    for (const d of dots) {
+      d.el.setAttribute("fill", d.defaultFill);
+      d.el.setAttribute("stroke", d.defaultStroke);
+      d.el.setAttribute("stroke-width", "1");
+      d.el.setAttribute("r", String(d.defaultR));
+      if (d.whisker) d.whisker.setAttribute("stroke", "rgba(124,154,255,0.3)");
+    }
+  }
+  function findNearestDot(dots, px, py, maxDist = 12) {
+    let best = -1;
+    let bestD = maxDist * maxDist;
+    for (let i = 0; i < dots.length; i++) {
+      const dx = px - dots[i].cx;
+      const dy = py - dots[i].cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = i;
+      }
+    }
+    return best;
+  }
+  function buildPointTooltipHtml(predictor, idx, selectedOutcome) {
+    let html = `<b>Trial ${idx}</b><br>`;
+    for (const name of predictor.outcomeNames) {
+      const td = predictor.getTrainingData(name);
+      if (idx >= td.Y.length) continue;
+      const isSel = name === selectedOutcome;
+      const color = isSel ? "#7c9aff" : "#888";
+      html += `${isSel ? "<b>" : ""}${name} = <span style="color:${color}">${td.Y[idx].toFixed(4)}</span>${isSel ? "</b>" : ""}<br>`;
+    }
+    html += '<hr style="border-color:#333;margin:4px 0">';
+    const td0 = predictor.getTrainingData(predictor.outcomeNames[0]);
+    if (idx < td0.X.length) {
+      for (let j = 0; j < predictor.paramNames.length; j++) {
+        html += `<span style="color:#888">${predictor.paramNames[j]}</span> = ${td0.X[idx][j].toFixed(4)}<br>`;
+      }
+    }
+    return html;
+  }
+  function attachDotInteractivity(svg, dots, predictor, outcome, tooltip, tooltipContainer, options) {
+    let localPinnedIdx = -1;
+    let hoverHighlight = false;
+    const getPinnedIdx = options?.getPinnedIdx ?? (() => localPinnedIdx);
+    const setPinnedIdx = options?.setPinnedIdx ?? ((v) => {
+      localPinnedIdx = v;
+    });
+    svg.addEventListener("mousemove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const hitIdx = findNearestDot(dots, px, py);
+      if (hitIdx >= 0) {
+        svg.style.cursor = "pointer";
+        if (getPinnedIdx() < 0) {
+          applyDotHighlight(dots, hitIdx, computeKernelRels(predictor, dots, hitIdx, outcome));
+          hoverHighlight = true;
+        }
+        const html = buildPointTooltipHtml(predictor, dots[hitIdx].idx, outcome);
+        tooltip.innerHTML = html;
+        tooltip.style.display = "block";
+        positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+      } else {
+        svg.style.cursor = "crosshair";
+        if (getPinnedIdx() < 0 && hoverHighlight) {
+          clearDotHighlight(dots);
+          hoverHighlight = false;
+        }
+        if (options?.fallbackMouseMove) {
+          options.fallbackMouseMove(e);
+        } else {
+          tooltip.style.display = "none";
+        }
+      }
+    });
+    svg.addEventListener("click", (e) => {
+      const rect = svg.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const hitIdx = findNearestDot(dots, px, py);
+      if (hitIdx >= 0) {
+        const hitTrainIdx = dots[hitIdx].idx;
+        if (getPinnedIdx() === hitTrainIdx) {
+          setPinnedIdx(-1);
+          clearDotHighlight(dots);
+        } else {
+          setPinnedIdx(hitTrainIdx);
+          applyDotHighlight(dots, hitIdx, computeKernelRels(predictor, dots, hitIdx, outcome));
+        }
+      } else {
+        if (getPinnedIdx() >= 0) {
+          setPinnedIdx(-1);
+          clearDotHighlight(dots);
+        }
+      }
+      hoverHighlight = false;
+      options?.onPinChange?.(getPinnedIdx());
+    });
+    svg.addEventListener("mouseleave", () => {
+      svg.style.cursor = "crosshair";
+      tooltip.style.display = "none";
+      if (getPinnedIdx() < 0 && hoverHighlight) {
+        clearDotHighlight(dots);
+        hoverHighlight = false;
+      }
+    });
+    return { getPinnedIdx };
+  }
   function renderFeatureImportanceStatic(target, predictor, outcome, tooltip, tooltipContainer) {
     const ranked = predictor.rankDimensionsByImportance(outcome);
     if (!ranked || ranked.length === 0) {
@@ -5292,24 +5435,41 @@ var Ax;
         "text-anchor": "end"
       }), { textContent: v.toFixed(2) }));
     }
+    const td = predictor.getTrainingData(outcome);
+    const cvDots = [];
+    const defaultFill = "rgba(124,154,255,0.85)";
+    const defaultStroke = "rgba(255,255,255,0.5)";
     for (let i = 0; i < n; i++) {
       const cx = sx(observed[i]), cy = sy(predicted[i]);
-      svg.appendChild(svgEl("line", {
+      const whisker = svgEl("line", {
         x1: cx,
         x2: cx,
         y1: sy(predicted[i] + 2 * predStd[i]),
         y2: sy(predicted[i] - 2 * predStd[i]),
         stroke: "rgba(124,154,255,0.3)",
         "stroke-width": 1.5
-      }));
-      svg.appendChild(svgEl("circle", {
+      });
+      svg.appendChild(whisker);
+      const dot = svgEl("circle", {
         cx,
         cy,
         r: 4,
-        fill: "rgba(124,154,255,0.85)",
-        stroke: "rgba(255,255,255,0.5)",
+        fill: defaultFill,
+        stroke: defaultStroke,
         "stroke-width": 1
-      }));
+      });
+      svg.appendChild(dot);
+      cvDots.push({
+        cx,
+        cy,
+        idx: i,
+        pt: td.X[i] ?? [],
+        el: dot,
+        whisker,
+        defaultFill,
+        defaultStroke,
+        defaultR: 4
+      });
     }
     svg.appendChild(Object.assign(svgEl("text", {
       x: margin.left + pw / 2,
@@ -5334,31 +5494,17 @@ var Ax;
       "font-weight": "600"
     }), { textContent: `R\xB2 = ${r2.toFixed(4)}` }));
     if (tooltip && tooltipContainer) {
-      svg.addEventListener("mousemove", (e) => {
-        const svgRect = svg.getBoundingClientRect();
-        const mx = e.clientX - svgRect.left;
-        const my = e.clientY - svgRect.top;
-        let bestDist = Infinity;
-        let bestIdx = -1;
-        for (let i = 0; i < n; i++) {
-          const dx = sx(observed[i]) - mx;
-          const dy = sy(predicted[i]) - my;
-          const d = dx * dx + dy * dy;
-          if (d < bestDist) {
-            bestDist = d;
-            bestIdx = i;
+      attachDotInteractivity(svg, cvDots, predictor, outcome, tooltip, tooltipContainer, {
+        fallbackMouseMove: (e) => {
+          const svgRect = svg.getBoundingClientRect();
+          const mx = e.clientX - svgRect.left;
+          const my = e.clientY - svgRect.top;
+          if (mx < margin.left || mx > margin.left + pw || my < margin.top || my > margin.top + ph) {
+            tooltip.style.display = "none";
+            return;
           }
-        }
-        if (bestIdx >= 0 && bestDist < 900) {
-          tooltip.innerHTML = `<b>Point ${bestIdx}</b><br>Observed: ${observed[bestIdx].toFixed(4)}<br>Predicted: ${predicted[bestIdx].toFixed(4)}<br>Std: ${predStd[bestIdx].toFixed(4)}`;
-          tooltip.style.display = "block";
-          positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
-        } else {
           tooltip.style.display = "none";
         }
-      });
-      svg.addEventListener("mouseleave", () => {
-        tooltip.style.display = "none";
       });
     }
     target.appendChild(svg);
@@ -5447,16 +5593,30 @@ var Ax;
       fill: "none",
       opacity: "0.7"
     })));
+    const traceDots = [];
     for (let i = 0; i < n; i++) {
       const isBest = bestSoFar[i] === yVals[i];
-      svg.appendChild(svgEl("circle", {
+      const dotFill = isBest ? "rgba(124,111,247,0.9)" : "rgba(255,255,255,0.3)";
+      const dotStroke = isBest ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.15)";
+      const dot = svgEl("circle", {
         cx: sx(i),
         cy: sy(yVals[i]),
         r: 4,
-        fill: isBest ? "rgba(124,111,247,0.9)" : "rgba(255,255,255,0.3)",
-        stroke: isBest ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.15)",
+        fill: dotFill,
+        stroke: dotStroke,
         "stroke-width": 1
-      }));
+      });
+      svg.appendChild(dot);
+      traceDots.push({
+        cx: sx(i),
+        cy: sy(yVals[i]),
+        idx: i,
+        pt: td.X[i] ?? [],
+        el: dot,
+        defaultFill: dotFill,
+        defaultStroke: dotStroke,
+        defaultR: 4
+      });
     }
     svg.appendChild(Object.assign(svgEl("text", {
       x: margin.left + pw / 2,
@@ -5498,31 +5658,10 @@ var Ax;
       "font-size": 11
     }), { textContent: "best so far" }));
     if (tooltip && tooltipContainer) {
-      svg.addEventListener("mousemove", (e) => {
-        const svgRect = svg.getBoundingClientRect();
-        const mx = e.clientX - svgRect.left;
-        const my = e.clientY - svgRect.top;
-        let bestDist = Infinity;
-        let bestIdx = -1;
-        for (let i = 0; i < n; i++) {
-          const dx = sx(i) - mx;
-          const dy = sy(yVals[i]) - my;
-          const d = dx * dx + dy * dy;
-          if (d < bestDist) {
-            bestDist = d;
-            bestIdx = i;
-          }
-        }
-        if (bestIdx >= 0 && bestDist < 900) {
-          tooltip.innerHTML = `<b>Trial ${bestIdx}</b><br>Value: ${yVals[bestIdx].toFixed(4)}<br>Best so far: ${bestSoFar[bestIdx].toFixed(4)}`;
-          tooltip.style.display = "block";
-          positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
-        } else {
+      attachDotInteractivity(svg, traceDots, predictor, outcome, tooltip, tooltipContainer, {
+        fallbackMouseMove: () => {
           tooltip.style.display = "none";
         }
-      });
-      svg.addEventListener("mouseleave", () => {
-        tooltip.style.display = "none";
       });
     }
     target.appendChild(svg);
@@ -5620,6 +5759,8 @@ var Ax;
     const margin = { top: 28, right: 18, bottom: 40, left: 68 };
     const pw = W - margin.left - margin.right;
     const ph = H - margin.top - margin.bottom;
+    let slicePinnedIdx = -1;
+    const allSubplotDots = [];
     const dimOrder = computeDimOrder(predictor, nDim, outcome);
     for (const dim of dimOrder) {
       const [lo, hi] = bounds[dim];
@@ -5727,49 +5868,81 @@ var Ax;
           { textContent: names[dim] }
         )
       );
+      const sliceDots = [];
+      const sliceDotFill = "rgba(255,60,60,0.85)";
+      const sliceDotStroke = "rgba(255,255,255,0.6)";
       if (td.X.length > 0) {
         for (let i = 0; i < td.X.length; i++) {
           const ptX = td.X[i][dim];
           if (ptX < lo || ptX > hi) continue;
           const ptY = td.Y[i];
           if (ptY < yMin || ptY > yMax) continue;
-          svg.appendChild(svgEl("circle", {
+          const dot = svgEl("circle", {
             cx: sx(ptX),
             cy: sy(ptY),
             r: 3.5,
-            fill: "rgba(255,60,60,0.85)",
-            stroke: "rgba(255,255,255,0.6)",
+            fill: sliceDotFill,
+            stroke: sliceDotStroke,
             "stroke-width": 1.2
-          }));
+          });
+          svg.appendChild(dot);
+          sliceDots.push({
+            cx: sx(ptX),
+            cy: sy(ptY),
+            idx: i,
+            pt: td.X[i],
+            el: dot,
+            defaultFill: sliceDotFill,
+            defaultStroke: sliceDotStroke,
+            defaultR: 3.5
+          });
         }
       }
+      allSubplotDots.push(sliceDots);
       if (tooltip && tooltipContainer) {
         const dimXs = xs;
         const dimMeans = means;
         const dimStds = stds;
-        svg.addEventListener("mousemove", (e) => {
-          const svgRect = svg.getBoundingClientRect();
-          const mx = e.clientX - svgRect.left;
-          const paramVal = lo + (mx - margin.left) / pw * (hi - lo);
-          if (paramVal < lo || paramVal > hi) {
-            tooltip.style.display = "none";
-            return;
-          }
-          let bestIdx = 0;
-          let bestDist = Math.abs(dimXs[0] - paramVal);
-          for (let j = 1; j < dimXs.length; j++) {
-            const d = Math.abs(dimXs[j] - paramVal);
-            if (d < bestDist) {
-              bestDist = d;
-              bestIdx = j;
+        attachDotInteractivity(svg, sliceDots, predictor, outcome, tooltip, tooltipContainer, {
+          getPinnedIdx: () => slicePinnedIdx,
+          setPinnedIdx: (v) => {
+            slicePinnedIdx = v;
+          },
+          fallbackMouseMove: (e) => {
+            const svgRect = svg.getBoundingClientRect();
+            const mx = e.clientX - svgRect.left;
+            const paramVal = lo + (mx - margin.left) / pw * (hi - lo);
+            if (paramVal < lo || paramVal > hi) {
+              tooltip.style.display = "none";
+              return;
+            }
+            let bestIdx = 0;
+            let bestDist = Math.abs(dimXs[0] - paramVal);
+            for (let j = 1; j < dimXs.length; j++) {
+              const d = Math.abs(dimXs[j] - paramVal);
+              if (d < bestDist) {
+                bestDist = d;
+                bestIdx = j;
+              }
+            }
+            tooltip.innerHTML = `<b>${names[dim]}</b>: ${dimXs[bestIdx].toFixed(4)}<br>Mean: ${dimMeans[bestIdx].toFixed(4)}<br>Std: ${dimStds[bestIdx].toFixed(4)}`;
+            tooltip.style.display = "block";
+            positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+          },
+          onPinChange: (pinnedIdx) => {
+            for (const subDots of allSubplotDots) {
+              if (pinnedIdx < 0) {
+                clearDotHighlight(subDots);
+              } else {
+                const subActiveIdx = subDots.findIndex((d) => d.idx === pinnedIdx);
+                if (subActiveIdx >= 0) {
+                  applyDotHighlight(subDots, subActiveIdx, computeKernelRels(predictor, subDots, subActiveIdx, outcome));
+                } else {
+                  clearDotHighlight(subDots);
+                }
+              }
             }
           }
-          tooltip.innerHTML = `<b>${names[dim]}</b>: ${dimXs[bestIdx].toFixed(4)}<br>Mean: ${dimMeans[bestIdx].toFixed(4)}<br>Std: ${dimStds[bestIdx].toFixed(4)}`;
-          tooltip.style.display = "block";
-          positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
-        });
-        svg.addEventListener("mouseleave", () => {
-          tooltip.style.display = "none";
         });
       }
       target.appendChild(svg);

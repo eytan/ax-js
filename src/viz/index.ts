@@ -467,6 +467,7 @@ export interface RenderPredictor {
   getTrainingData(outcomeName?: string): { X: number[][]; Y: number[]; paramNames: string[] };
   loocv(outcomeName?: string): { observed: number[]; mean: number[]; variance: number[] };
   rankDimensionsByImportance(outcomeName?: string): { dimIndex: number; paramName: string; lengthscale: number }[];
+  kernelCorrelation(point: number[], refPoint: number[], outcomeName?: string): number;
 }
 
 /** Options for renderFeatureImportance. */
@@ -546,6 +547,213 @@ export function renderFeatureImportance(
     renderFeatureImportanceStatic(plotsDiv, predictor, selectedOutcome, tooltip, container);
   }
   redraw();
+}
+
+// ── Training point interactivity helpers ───────────────────────────────
+
+/** Info tracked for each visible training dot in an SVG plot. */
+interface DotInfo {
+  cx: number;
+  cy: number;
+  idx: number;
+  pt: number[];
+  el: SVGCircleElement;
+  /** Optional whisker element (CV plot). */
+  whisker?: SVGLineElement;
+  /** Default fill when not highlighted. */
+  defaultFill: string;
+  /** Default stroke when not highlighted. */
+  defaultStroke: string;
+  /** Default radius. */
+  defaultR: number;
+}
+
+/** Compute kernel correlations from a reference point to all dots. */
+function computeKernelRels(
+  predictor: RenderPredictor,
+  dots: DotInfo[],
+  activeIdx: number,
+  outcome: string,
+): { raw: number[]; max: number } {
+  const rawRels: number[] = [];
+  let maxRel = 0;
+  for (let i = 0; i < dots.length; i++) {
+    if (i === activeIdx) { rawRels.push(1); continue; }
+    const r = predictor.kernelCorrelation(dots[i].pt, dots[activeIdx].pt, outcome);
+    rawRels.push(r);
+    if (r > maxRel) maxRel = r;
+  }
+  return { raw: rawRels, max: maxRel };
+}
+
+/** Apply kernel-distance-based highlight styling to SVG dot elements. */
+function applyDotHighlight(
+  dots: DotInfo[],
+  activeIdx: number,
+  rels: { raw: number[]; max: number },
+): void {
+  for (let i = 0; i < dots.length; i++) {
+    const d = dots[i];
+    if (i === activeIdx) {
+      d.el.setAttribute("fill", "rgba(255,80,80,0.95)");
+      d.el.setAttribute("stroke", "rgba(255,255,255,1)");
+      d.el.setAttribute("stroke-width", "2");
+      d.el.setAttribute("r", String(d.defaultR + 2));
+      if (d.whisker) d.whisker.setAttribute("stroke", "rgba(255,80,80,0.5)");
+    } else {
+      const relNorm = rels.max > 0 ? rels.raw[i] / rels.max : 0;
+      const fa = Math.max(0.08, Math.min(0.90, Math.sqrt(relNorm)));
+      d.el.setAttribute("fill", `rgba(255,80,80,${fa.toFixed(3)})`);
+      d.el.setAttribute("stroke", `rgba(255,255,255,${Math.max(0.15, fa * 0.6).toFixed(3)})`);
+      d.el.setAttribute("stroke-width", "1");
+      d.el.setAttribute("r", String(d.defaultR));
+      if (d.whisker) d.whisker.setAttribute("stroke", `rgba(255,80,80,${(fa * 0.35).toFixed(3)})`);
+    }
+  }
+}
+
+/** Reset all dots to their default style. */
+function clearDotHighlight(dots: DotInfo[]): void {
+  for (const d of dots) {
+    d.el.setAttribute("fill", d.defaultFill);
+    d.el.setAttribute("stroke", d.defaultStroke);
+    d.el.setAttribute("stroke-width", "1");
+    d.el.setAttribute("r", String(d.defaultR));
+    if (d.whisker) d.whisker.setAttribute("stroke", "rgba(124,154,255,0.3)");
+  }
+}
+
+/** Find nearest dot within a pixel radius. Returns index or -1. */
+function findNearestDot(dots: DotInfo[], px: number, py: number, maxDist = 12): number {
+  let best = -1;
+  let bestD = maxDist * maxDist;
+  for (let i = 0; i < dots.length; i++) {
+    const dx = px - dots[i].cx;
+    const dy = py - dots[i].cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD) { bestD = d2; best = i; }
+  }
+  return best;
+}
+
+/** Build rich tooltip HTML showing all outcomes and parameters for a training point. */
+function buildPointTooltipHtml(
+  predictor: RenderPredictor,
+  idx: number,
+  selectedOutcome: string,
+): string {
+  let html = `<b>Trial ${idx}</b><br>`;
+  for (const name of predictor.outcomeNames) {
+    const td = predictor.getTrainingData(name);
+    if (idx >= td.Y.length) continue;
+    const isSel = name === selectedOutcome;
+    const color = isSel ? "#7c9aff" : "#888";
+    html += `${isSel ? "<b>" : ""}${name} = <span style="color:${color}">${td.Y[idx].toFixed(4)}</span>${isSel ? "</b>" : ""}<br>`;
+  }
+  html += '<hr style="border-color:#333;margin:4px 0">';
+  // Show parameter values — use the first outcome's training data for X
+  const td0 = predictor.getTrainingData(predictor.outcomeNames[0]);
+  if (idx < td0.X.length) {
+    for (let j = 0; j < predictor.paramNames.length; j++) {
+      html += `<span style="color:#888">${predictor.paramNames[j]}</span> = ${td0.X[idx][j].toFixed(4)}<br>`;
+    }
+  }
+  return html;
+}
+
+/**
+ * Attach click-to-pin and hover-highlight handlers to an SVG for training dots.
+ * This is the shared interactivity layer used by slice, CV, and trace plots.
+ */
+function attachDotInteractivity(
+  svg: SVGSVGElement,
+  dots: DotInfo[],
+  predictor: RenderPredictor,
+  outcome: string,
+  tooltip: HTMLDivElement,
+  tooltipContainer: HTMLElement,
+  options?: {
+    /** Existing hover handler to call when not hovering a dot. */
+    fallbackMouseMove?: (e: MouseEvent) => void;
+    /** Callback when pinned index changes (for cross-subplot coordination). */
+    onPinChange?: (pinnedIdx: number) => void;
+    /** External getter/setter for shared pinned state across subplots. */
+    getPinnedIdx?: () => number;
+    setPinnedIdx?: (idx: number) => void;
+  },
+): { getPinnedIdx: () => number } {
+  let localPinnedIdx = -1;
+  let hoverHighlight = false;
+
+  const getPinnedIdx = options?.getPinnedIdx ?? (() => localPinnedIdx);
+  const setPinnedIdx = options?.setPinnedIdx ?? ((v: number) => { localPinnedIdx = v; });
+
+  svg.addEventListener("mousemove", (e: MouseEvent) => {
+    const rect = svg.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const hitIdx = findNearestDot(dots, px, py);
+
+    if (hitIdx >= 0) {
+      svg.style.cursor = "pointer";
+      if (getPinnedIdx() < 0) {
+        applyDotHighlight(dots, hitIdx, computeKernelRels(predictor, dots, hitIdx, outcome));
+        hoverHighlight = true;
+      }
+      const html = buildPointTooltipHtml(predictor, dots[hitIdx].idx, outcome);
+      tooltip.innerHTML = html;
+      tooltip.style.display = "block";
+      positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+    } else {
+      svg.style.cursor = "crosshair";
+      if (getPinnedIdx() < 0 && hoverHighlight) {
+        clearDotHighlight(dots);
+        hoverHighlight = false;
+      }
+      if (options?.fallbackMouseMove) {
+        options.fallbackMouseMove(e);
+      } else {
+        tooltip.style.display = "none";
+      }
+    }
+  });
+
+  svg.addEventListener("click", (e: MouseEvent) => {
+    const rect = svg.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const hitIdx = findNearestDot(dots, px, py);
+
+    if (hitIdx >= 0) {
+      const hitTrainIdx = dots[hitIdx].idx;
+      if (getPinnedIdx() === hitTrainIdx) {
+        // Unpin
+        setPinnedIdx(-1);
+        clearDotHighlight(dots);
+      } else {
+        setPinnedIdx(hitTrainIdx);
+        applyDotHighlight(dots, hitIdx, computeKernelRels(predictor, dots, hitIdx, outcome));
+      }
+    } else {
+      if (getPinnedIdx() >= 0) {
+        setPinnedIdx(-1);
+        clearDotHighlight(dots);
+      }
+    }
+    hoverHighlight = false;
+    options?.onPinChange?.(getPinnedIdx());
+  });
+
+  svg.addEventListener("mouseleave", () => {
+    svg.style.cursor = "crosshair";
+    tooltip.style.display = "none";
+    if (getPinnedIdx() < 0 && hoverHighlight) {
+      clearDotHighlight(dots);
+      hoverHighlight = false;
+    }
+  });
+
+  return { getPinnedIdx };
 }
 
 function renderFeatureImportanceStatic(
@@ -739,19 +947,29 @@ function renderCrossValidationStatic(
     }), { textContent: v.toFixed(2) }));
   }
 
-  // CI whiskers + dots
+  // CI whiskers + dots (stored for interactivity)
+  const td = predictor.getTrainingData(outcome);
+  const cvDots: DotInfo[] = [];
+  const defaultFill = "rgba(124,154,255,0.85)";
+  const defaultStroke = "rgba(255,255,255,0.5)";
   for (let i = 0; i < n; i++) {
     const cx = sx(observed[i]), cy = sy(predicted[i]);
-    svg.appendChild(svgEl("line", {
+    const whisker = svgEl("line", {
       x1: cx, x2: cx,
       y1: sy(predicted[i] + 2 * predStd[i]),
       y2: sy(predicted[i] - 2 * predStd[i]),
       stroke: "rgba(124,154,255,0.3)", "stroke-width": 1.5,
-    }));
-    svg.appendChild(svgEl("circle", {
-      cx, cy, r: 4, fill: "rgba(124,154,255,0.85)",
-      stroke: "rgba(255,255,255,0.5)", "stroke-width": 1,
-    }));
+    });
+    svg.appendChild(whisker);
+    const dot = svgEl("circle", {
+      cx, cy, r: 4, fill: defaultFill,
+      stroke: defaultStroke, "stroke-width": 1,
+    });
+    svg.appendChild(dot);
+    cvDots.push({
+      cx, cy, idx: i, pt: td.X[i] ?? [], el: dot, whisker,
+      defaultFill, defaultStroke, defaultR: 4,
+    });
   }
 
   // Axis labels
@@ -768,33 +986,21 @@ function renderCrossValidationStatic(
     x: margin.left + 6, y: margin.top + 18, fill: "#7c9aff", "font-size": 14, "font-weight": "600",
   }), { textContent: `R\u00B2 = ${r2.toFixed(4)}` }));
 
-  // Tooltip on hover: find nearest point
+  // Click-to-pin interactivity with kernel-distance highlight
   if (tooltip && tooltipContainer) {
-    svg.addEventListener("mousemove", (e: MouseEvent) => {
-      const svgRect = svg.getBoundingClientRect();
-      const mx = e.clientX - svgRect.left;
-      const my = e.clientY - svgRect.top;
-      let bestDist = Infinity;
-      let bestIdx = -1;
-      for (let i = 0; i < n; i++) {
-        const dx = sx(observed[i]) - mx;
-        const dy = sy(predicted[i]) - my;
-        const d = dx * dx + dy * dy;
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
-      }
-      if (bestIdx >= 0 && bestDist < 900) {
-        tooltip.innerHTML =
-          `<b>Point ${bestIdx}</b><br>` +
-          `Observed: ${observed[bestIdx].toFixed(4)}<br>` +
-          `Predicted: ${predicted[bestIdx].toFixed(4)}<br>` +
-          `Std: ${predStd[bestIdx].toFixed(4)}`;
-        tooltip.style.display = 'block';
-        positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
-      } else {
-        tooltip.style.display = 'none';
-      }
+    attachDotInteractivity(svg, cvDots, predictor, outcome, tooltip, tooltipContainer, {
+      fallbackMouseMove: (e: MouseEvent) => {
+        // When not hovering a dot, show curve tooltip with observed/predicted
+        const svgRect = svg.getBoundingClientRect();
+        const mx = e.clientX - svgRect.left;
+        const my = e.clientY - svgRect.top;
+        if (mx < margin.left || mx > margin.left + pw || my < margin.top || my > margin.top + ph) {
+          tooltip.style.display = "none";
+          return;
+        }
+        tooltip.style.display = "none";
+      },
     });
-    svg.addEventListener("mouseleave", () => { tooltip.style.display = 'none'; });
   }
 
   target.appendChild(svg);
@@ -903,15 +1109,21 @@ function renderOptimizationTraceStatic(
     d: bsfPath, stroke: "#7c6ff7", "stroke-width": 2.5, fill: "none", opacity: "0.7",
   })));
 
-  // Dots
+  // Dots (stored for interactivity)
+  const traceDots: DotInfo[] = [];
   for (let i = 0; i < n; i++) {
     const isBest = bestSoFar[i] === yVals[i];
-    svg.appendChild(svgEl("circle", {
+    const dotFill = isBest ? "rgba(124,111,247,0.9)" : "rgba(255,255,255,0.3)";
+    const dotStroke = isBest ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.15)";
+    const dot = svgEl("circle", {
       cx: sx(i), cy: sy(yVals[i]), r: 4,
-      fill: isBest ? "rgba(124,111,247,0.9)" : "rgba(255,255,255,0.3)",
-      stroke: isBest ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.15)",
-      "stroke-width": 1,
-    }));
+      fill: dotFill, stroke: dotStroke, "stroke-width": 1,
+    });
+    svg.appendChild(dot);
+    traceDots.push({
+      cx: sx(i), cy: sy(yVals[i]), idx: i, pt: td.X[i] ?? [], el: dot,
+      defaultFill: dotFill, defaultStroke: dotStroke, defaultR: 4,
+    });
   }
 
   // Axis labels
@@ -941,32 +1153,11 @@ function renderOptimizationTraceStatic(
     x: margin.left + pw - 96, y: margin.top + 16, fill: "#888", "font-size": 11,
   }), { textContent: "best so far" }));
 
-  // Tooltip on hover: find nearest trial
+  // Click-to-pin interactivity with kernel-distance highlight
   if (tooltip && tooltipContainer) {
-    svg.addEventListener("mousemove", (e: MouseEvent) => {
-      const svgRect = svg.getBoundingClientRect();
-      const mx = e.clientX - svgRect.left;
-      const my = e.clientY - svgRect.top;
-      let bestDist = Infinity;
-      let bestIdx = -1;
-      for (let i = 0; i < n; i++) {
-        const dx = sx(i) - mx;
-        const dy = sy(yVals[i]) - my;
-        const d = dx * dx + dy * dy;
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
-      }
-      if (bestIdx >= 0 && bestDist < 900) {
-        tooltip.innerHTML =
-          `<b>Trial ${bestIdx}</b><br>` +
-          `Value: ${yVals[bestIdx].toFixed(4)}<br>` +
-          `Best so far: ${bestSoFar[bestIdx].toFixed(4)}`;
-        tooltip.style.display = 'block';
-        positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
-      } else {
-        tooltip.style.display = 'none';
-      }
+    attachDotInteractivity(svg, traceDots, predictor, outcome, tooltip, tooltipContainer, {
+      fallbackMouseMove: () => { tooltip.style.display = "none"; },
     });
-    svg.addEventListener("mouseleave", () => { tooltip.style.display = 'none'; });
   }
 
   target.appendChild(svg);
@@ -1144,6 +1335,10 @@ function renderSlicePlotStatic(
   const pw = W - margin.left - margin.right;
   const ph = H - margin.top - margin.bottom;
 
+  // Cross-subplot pinned state and dot arrays
+  let slicePinnedIdx = -1;
+  const allSubplotDots: DotInfo[][] = [];
+
   // Sort dimensions by importance (most important first)
   const dimOrder = computeDimOrder(predictor as DimensionRanker, nDim, outcome);
 
@@ -1259,48 +1454,74 @@ function renderSlicePlotStatic(
       ),
     );
 
-    // Training data dots (td already fetched for y-axis range)
+    // Training data dots (stored for interactivity)
+    const sliceDots: DotInfo[] = [];
+    const sliceDotFill = "rgba(255,60,60,0.85)";
+    const sliceDotStroke = "rgba(255,255,255,0.6)";
     if (td.X.length > 0) {
       for (let i = 0; i < td.X.length; i++) {
         const ptX = td.X[i][dim];
         if (ptX < lo || ptX > hi) continue;
         const ptY = td.Y[i];
         if (ptY < yMin || ptY > yMax) continue;
-        svg.appendChild(svgEl("circle", {
+        const dot = svgEl("circle", {
           cx: sx(ptX), cy: sy(ptY), r: 3.5,
-          fill: "rgba(255,60,60,0.85)", stroke: "rgba(255,255,255,0.6)",
-          "stroke-width": 1.2,
-        }));
+          fill: sliceDotFill, stroke: sliceDotStroke, "stroke-width": 1.2,
+        });
+        svg.appendChild(dot);
+        sliceDots.push({
+          cx: sx(ptX), cy: sy(ptY), idx: i, pt: td.X[i], el: dot,
+          defaultFill: sliceDotFill, defaultStroke: sliceDotStroke, defaultR: 3.5,
+        });
       }
     }
+    allSubplotDots.push(sliceDots);
 
-    // Tooltip on hover
+    // Tooltip on hover (curve + point interactivity)
     if (tooltip && tooltipContainer) {
-      // Capture dim-local data in closure
       const dimXs = xs;
       const dimMeans = means;
       const dimStds = stds;
-      svg.addEventListener("mousemove", (e: MouseEvent) => {
-        const svgRect = svg.getBoundingClientRect();
-        const mx = e.clientX - svgRect.left;
-        // Map pixel x back to parameter value
-        const paramVal = lo + ((mx - margin.left) / pw) * (hi - lo);
-        if (paramVal < lo || paramVal > hi) { tooltip.style.display = 'none'; return; }
-        // Find nearest sample index
-        let bestIdx = 0;
-        let bestDist = Math.abs(dimXs[0] - paramVal);
-        for (let j = 1; j < dimXs.length; j++) {
-          const d = Math.abs(dimXs[j] - paramVal);
-          if (d < bestDist) { bestDist = d; bestIdx = j; }
-        }
-        tooltip.innerHTML =
-          `<b>${names[dim]}</b>: ${dimXs[bestIdx].toFixed(4)}<br>` +
-          `Mean: ${dimMeans[bestIdx].toFixed(4)}<br>` +
-          `Std: ${dimStds[bestIdx].toFixed(4)}`;
-        tooltip.style.display = 'block';
-        positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+
+      attachDotInteractivity(svg, sliceDots, predictor, outcome, tooltip, tooltipContainer, {
+        getPinnedIdx: () => slicePinnedIdx,
+        setPinnedIdx: (v: number) => { slicePinnedIdx = v; },
+        fallbackMouseMove: (e: MouseEvent) => {
+          // Show curve tooltip when not hovering a training dot
+          const svgRect = svg.getBoundingClientRect();
+          const mx = e.clientX - svgRect.left;
+          const paramVal = lo + ((mx - margin.left) / pw) * (hi - lo);
+          if (paramVal < lo || paramVal > hi) { tooltip.style.display = "none"; return; }
+          let bestIdx = 0;
+          let bestDist = Math.abs(dimXs[0] - paramVal);
+          for (let j = 1; j < dimXs.length; j++) {
+            const d = Math.abs(dimXs[j] - paramVal);
+            if (d < bestDist) { bestDist = d; bestIdx = j; }
+          }
+          tooltip.innerHTML =
+            `<b>${names[dim]}</b>: ${dimXs[bestIdx].toFixed(4)}<br>` +
+            `Mean: ${dimMeans[bestIdx].toFixed(4)}<br>` +
+            `Std: ${dimStds[bestIdx].toFixed(4)}`;
+          tooltip.style.display = "block";
+          positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+        },
+        onPinChange: (pinnedIdx: number) => {
+          // Cross-subplot coordination: update all subplots
+          for (const subDots of allSubplotDots) {
+            if (pinnedIdx < 0) {
+              clearDotHighlight(subDots);
+            } else {
+              // Find this training index in subDots
+              const subActiveIdx = subDots.findIndex((d) => d.idx === pinnedIdx);
+              if (subActiveIdx >= 0) {
+                applyDotHighlight(subDots, subActiveIdx, computeKernelRels(predictor, subDots, subActiveIdx, outcome));
+              } else {
+                clearDotHighlight(subDots);
+              }
+            }
+          }
+        },
       });
-      svg.addEventListener("mouseleave", () => { tooltip.style.display = 'none'; });
     }
 
     target.appendChild(svg);
@@ -1532,52 +1753,170 @@ function renderResponseSurfaceStatic(
   ctx.fillText(names[dimY], 0, 0);
   ctx.restore();
 
-  // Training points
+  // Training points (tracked for interactivity)
   const td = predictor.getTrainingData(outcome);
+  interface CanvasDot { px: number; py: number; idx: number; pt: number[]; alpha: number }
+  const canvasDots: CanvasDot[] = [];
+  const xRange = xhi - xlo || 1;
+  const yRange = yhi - ylo || 1;
   if (td.X.length > 0) {
-    const xRange = xhi - xlo || 1;
-    const yRange = yhi - ylo || 1;
     for (let i = 0; i < td.X.length; i++) {
       const px = ML + ((td.X[i][dimX] - xlo) / xRange) * N;
       const py = MT + (1 - (td.X[i][dimY] - ylo) / yRange) * N;
-      ctx.beginPath();
-      ctx.arc(px, py, 4, 0, 2 * Math.PI);
-      ctx.strokeStyle = "rgba(255,255,255,0.7)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(px, py, 2.5, 0, 2 * Math.PI);
-      ctx.fillStyle = "rgba(255,60,60,0.85)";
-      ctx.fill();
+      canvasDots.push({ px, py, idx: i, pt: td.X[i], alpha: 0.85 });
     }
   }
 
-  // Tooltip on canvas hover
+  let rsPinnedIdx = -1;
+
+  function redrawDots() {
+    // Save and restore the heatmap portion, then overdraw dots
+    // We only need to clear the dot area (the whole canvas above heatmap is axes)
+    // Simpler: just redraw all dots on top. Since canvas is immediate mode,
+    // we re-put the heatmap image and axes first.
+    ctx!.putImageData(heatImg, ML, MT);
+
+    // Re-draw axes (they're outside the heatmap area, so heatmap putImageData doesn't touch them)
+    // But putImageData only affects the ML,MT region. Axes are outside that.
+
+    for (const d of canvasDots) {
+      const isActive = d.idx === rsPinnedIdx;
+      const outerR = isActive ? 6 : 4;
+      const innerR = isActive ? 3.5 : 2.5;
+      ctx!.beginPath();
+      ctx!.arc(d.px, d.py, outerR, 0, 2 * Math.PI);
+      ctx!.strokeStyle = isActive
+        ? "rgba(255,255,255,1)"
+        : `rgba(255,255,255,${Math.max(0.15, d.alpha * 0.7).toFixed(3)})`;
+      ctx!.lineWidth = isActive ? 2.5 : 1.5;
+      ctx!.stroke();
+      if (d.alpha >= 0.04) {
+        ctx!.beginPath();
+        ctx!.arc(d.px, d.py, innerR, 0, 2 * Math.PI);
+        ctx!.fillStyle = isActive
+          ? "rgba(255,60,60,1)"
+          : `rgba(255,60,60,${d.alpha.toFixed(3)})`;
+        ctx!.fill();
+      }
+    }
+  }
+
+  function findNearestCanvasDot(mx: number, my: number): number {
+    let best = -1;
+    let bestD = 144; // 12px radius squared
+    for (let i = 0; i < canvasDots.length; i++) {
+      const dx = mx - canvasDots[i].px;
+      const dy = my - canvasDots[i].py;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD) { bestD = d2; best = i; }
+    }
+    return best;
+  }
+
+  function applyCanvasHighlight(activeIdx: number) {
+    const rels = { raw: [] as number[], max: 0 };
+    for (let i = 0; i < canvasDots.length; i++) {
+      if (i === activeIdx) { rels.raw.push(1); continue; }
+      const r = predictor.kernelCorrelation(canvasDots[i].pt, canvasDots[activeIdx].pt, outcome);
+      rels.raw.push(r);
+      if (r > rels.max) rels.max = r;
+    }
+    for (let i = 0; i < canvasDots.length; i++) {
+      if (i === activeIdx) { canvasDots[i].alpha = 1; continue; }
+      const relNorm = rels.max > 0 ? rels.raw[i] / rels.max : 0;
+      canvasDots[i].alpha = Math.max(0.08, Math.sqrt(relNorm));
+    }
+  }
+
+  function clearCanvasHighlight() {
+    for (const d of canvasDots) d.alpha = 0.85;
+  }
+
+  // Initial draw
+  redrawDots();
+
+  // Interactive hover/click on canvas
   if (tooltip && tooltipContainer) {
+    let hoverHighlight = false;
+
     canvas.addEventListener("mousemove", (e: MouseEvent) => {
       const cRect = canvas.getBoundingClientRect();
       const mx = e.clientX - cRect.left;
       const my = e.clientY - cRect.top;
-      // Check if within plot area
       if (mx < ML || mx > ML + N || my < MT || my > MT + N) {
-        tooltip.style.display = 'none';
+        tooltip.style.display = "none";
         return;
       }
-      const xVal = xlo + ((mx - ML) / N) * (xhi - xlo);
-      const yVal = yhi - ((my - MT) / N) * (yhi - ylo);
-      // Find nearest grid cell value
-      const gi = Math.round(((mx - ML) / N) * (gridSize - 1));
-      const gj = Math.round(((my - MT) / N) * (gridSize - 1));
-      const idx = Math.max(0, Math.min(gridSize - 1, gj)) * gridSize + Math.max(0, Math.min(gridSize - 1, gi));
-      const predVal = means[idx] ?? 0;
-      tooltip.innerHTML =
-        `<b>${names[dimX]}</b>: ${xVal.toFixed(4)}<br>` +
-        `<b>${names[dimY]}</b>: ${yVal.toFixed(4)}<br>` +
-        `Predicted: ${predVal.toFixed(4)}`;
-      tooltip.style.display = 'block';
-      positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+
+      const hitIdx = findNearestCanvasDot(mx, my);
+
+      if (hitIdx >= 0) {
+        canvas.style.cursor = "pointer";
+        if (rsPinnedIdx < 0) {
+          applyCanvasHighlight(hitIdx);
+          redrawDots();
+          hoverHighlight = true;
+        }
+        tooltip.innerHTML = buildPointTooltipHtml(predictor, canvasDots[hitIdx].idx, outcome);
+        tooltip.style.display = "block";
+        positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+      } else {
+        canvas.style.cursor = "crosshair";
+        if (rsPinnedIdx < 0 && hoverHighlight) {
+          clearCanvasHighlight();
+          redrawDots();
+          hoverHighlight = false;
+        }
+        // Show grid tooltip
+        const xVal = xlo + ((mx - ML) / N) * (xhi - xlo);
+        const yVal = yhi - ((my - MT) / N) * (yhi - ylo);
+        const gi = Math.round(((mx - ML) / N) * (gridSize - 1));
+        const gj = Math.round(((my - MT) / N) * (gridSize - 1));
+        const idx = Math.max(0, Math.min(gridSize - 1, gj)) * gridSize + Math.max(0, Math.min(gridSize - 1, gi));
+        const predVal = means[idx] ?? 0;
+        tooltip.innerHTML =
+          `<b>${names[dimX]}</b>: ${xVal.toFixed(4)}<br>` +
+          `<b>${names[dimY]}</b>: ${yVal.toFixed(4)}<br>` +
+          `Predicted: ${predVal.toFixed(4)}`;
+        tooltip.style.display = "block";
+        positionTooltip(tooltip, tooltipContainer, e.clientX, e.clientY);
+      }
     });
-    canvas.addEventListener("mouseleave", () => { tooltip.style.display = 'none'; });
+
+    canvas.addEventListener("click", (e: MouseEvent) => {
+      const cRect = canvas.getBoundingClientRect();
+      const mx = e.clientX - cRect.left;
+      const my = e.clientY - cRect.top;
+      const hitIdx = findNearestCanvasDot(mx, my);
+
+      if (hitIdx >= 0) {
+        const hitTrainIdx = canvasDots[hitIdx].idx;
+        if (rsPinnedIdx === hitTrainIdx) {
+          rsPinnedIdx = -1;
+          clearCanvasHighlight();
+        } else {
+          rsPinnedIdx = hitTrainIdx;
+          applyCanvasHighlight(hitIdx);
+        }
+      } else {
+        if (rsPinnedIdx >= 0) {
+          rsPinnedIdx = -1;
+          clearCanvasHighlight();
+        }
+      }
+      redrawDots();
+      hoverHighlight = false;
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+      canvas.style.cursor = "crosshair";
+      tooltip.style.display = "none";
+      if (rsPinnedIdx < 0 && hoverHighlight) {
+        clearCanvasHighlight();
+        redrawDots();
+        hoverHighlight = false;
+      }
+    });
   }
 
   target.appendChild(canvas);
