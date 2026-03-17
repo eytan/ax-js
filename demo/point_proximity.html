@@ -2253,7 +2253,12 @@ var Ax = (() => {
   function getSubModel(ms, outcomeNames, outcomeName) {
     if (ms.model_type === "ModelListGP") {
       const idx = outcomeNames.indexOf(outcomeName);
-      return ms.models[Math.max(0, idx)];
+      if (idx < 0) {
+        throw new Error(
+          `Unknown outcome "${outcomeName}". Available: ${outcomeNames.join(", ")}`
+        );
+      }
+      return ms.models[idx];
     }
     return ms;
   }
