@@ -40,12 +40,14 @@ build_demos.js          # Node.js build script
 - **Supports**: LEQ and GEQ constraints, minimize/maximize objectives
 - **Rendering**: Canvas radar chart
 
-### 4. scatteroid — Relativized Scatter
+### 4. scatteroid — BO Cockpit
 
-- **Default fixture**: None (generates VSIP synthetic data on-the-fly)
-- **Features**: Relativized predictions vs status quo, candidate highlighting, deltoid bars, Pareto front overlay, distance mode selector (euclidean/bi-objective kernel/kernel)
-- **Note**: VSIP code stays inline (only demo that generates data at runtime)
-- **Rendering**: Canvas
+- **Default fixture**: None (generates semi-synthetic VSIP BO experiment on-the-fly)
+- **Features**: Multi-batch BO visualization with Sobol init (8 pts), qEHVI batch (5 completed), and 5 pending candidates. Generation method color coding, constraint bound dashed lines on deltoid (converted to relative space), constraint violation indicators, candidate editing/creation, JSON export, batch filter dropdown. Relativized predictions vs status quo, CI crosshairs, distance-based opacity.
+- **Data model**: Arms carry metadata (armName, batchIndex, trialStatus, generationMethod). Sobol points use Halton sequences; qEHVI points are biased perturbations of top performers. Candidates are predicted through the model but not part of training data.
+- **Optimization config**: 3 objectives (weight, acceleration, intrusion — all minimize), 4 outcome constraints (door_velocity, bpillar_top_vel, pubic_force, abdomen_load), 3 objective thresholds
+- **Visual encoding**: Blue circles (Sobol), teal circles (qEHVI), open diamond (SQ), gold star outlines (fixture candidates), filled coral stars (user candidates). Deltoid shows constraint bounds as dashed lines (red for constraints, gold for objective thresholds).
+- **Rendering**: SVG
 
 ### 5. point_proximity — Opacity Diagnostic Tool
 

@@ -2324,6 +2324,8 @@ function normalizeFixture(data) {
     if (data.experiment.optimization_config) result.optimization_config = data.experiment.optimization_config;
     if (data.experiment.status_quo) result.status_quo = data.experiment.status_quo;
     if (data.experiment.adapter_transforms) result.adapter_transforms = data.experiment.adapter_transforms;
+    if (data.experiment.observations) result.observations = data.experiment.observations;
+    if (data.experiment.candidates) result.candidates = data.experiment.candidates;
     return result;
   }
   return data;
