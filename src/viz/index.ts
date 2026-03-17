@@ -292,8 +292,10 @@ interface EmbeddingPredictor {
 /**
  * Populate a `<select>` element with the predictor's outcome names.
  *
- * Clears existing options, adds one `<option>` per outcome, selects the
- * first, and calls `onChange(selectedName)` whenever the selection changes.
+ * Clears existing options, adds one `<option>` per outcome, and selects
+ * the first. Attaches a `change` listener that calls `onChange(selectedName)`.
+ * Safe to call repeatedly — replaces the previous listener each time by
+ * cloning the element's event handlers.
  *
  * @param predictor - Provides `outcomeNames`.
  * @param selectEl - The `<select>` element to populate.
@@ -311,7 +313,9 @@ export function createOutcomeSelector(
     opt.textContent = name;
     selectEl.appendChild(opt);
   });
-  selectEl.addEventListener("change", () => onChange(selectEl.value));
+  // Use onchange (property) instead of addEventListener to ensure
+  // repeated calls replace rather than stack handlers.
+  selectEl.onchange = () => onChange(selectEl.value);
 }
 
 /**

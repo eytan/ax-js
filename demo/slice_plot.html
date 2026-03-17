@@ -2427,7 +2427,7 @@ var Ax;
       opt.textContent = name;
       selectEl.appendChild(opt);
     });
-    selectEl.addEventListener("change", () => onChange(selectEl.value));
+    selectEl.onchange = () => onChange(selectEl.value);
   }
   function createParamSliders(predictor, params, container, currentValues, onChange, options) {
     container.innerHTML = "";

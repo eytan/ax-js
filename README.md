@@ -74,7 +74,7 @@ Interactive demos are in the [demo/](demo/) directory. Clone the repo, run `npm 
 
 **Model Diagnostics** — Leave-one-out cross-validation, feature importance (lengthscale-based), and optimization trace with best-so-far tracking.
 
-**Multi-Objective** — Radar chart for constrained MOO and a BO cockpit for exploring many-objective tradeoffs with candidate editing.
+**Multi-Objective** — Radar chart for constrained MOO and a Ax Cockpit for exploring many-objective tradeoffs with candidate editing.
 
 **Bayesian Optimization Loop** — Live BO with Thompson sampling on test functions, and preferential BO (BOPE) with pairwise comparison learning.
 

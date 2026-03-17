@@ -61,14 +61,11 @@ var barColors = ['#7c6ff7','#6fa0f7','#6fcff7','#6ff7c8','#a0f76f','#f7e06f','#f
 // File upload — wired via shared utility instead of manual addEventListener
 Ax.viz.setupFileUpload('fileInput', function(data) { loadFixtureData(data); });
 
-// Outcome selector change — single listener wired once
-outcomeSelect.addEventListener('change', function() { selectedOutcome = outcomeSelect.value; render(); });
-
 function loadFixtureData(data) {
   fixture = Ax.viz.normalizeFixture(data);
   predictor = new Predictor(fixture);
 
-  // Populate outcome dropdown via shared utility (clears + fills options)
+  // Populate outcome dropdown via shared utility (clears + fills options + wires change listener)
   Ax.viz.createOutcomeSelector(predictor, outcomeSelect, function(name) {
     selectedOutcome = name; render();
   });

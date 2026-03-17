@@ -5016,7 +5016,7 @@ var Ax;
       opt.textContent = name;
       selectEl.appendChild(opt);
     });
-    selectEl.addEventListener("change", () => onChange(selectEl.value));
+    selectEl.onchange = () => onChange(selectEl.value);
   }
   function createParamSliders(predictor, params, container, currentValues, onChange, options) {
     container.innerHTML = "";
@@ -5129,7 +5129,7 @@ function loadFixtureData(data) {
   fixture = Ax.viz.normalizeFixture(data);
   predictor = new Predictor(fixture);
 
-  // Populate outcome selector via shared utility
+  // Populate outcome dropdown via shared utility (clears + fills options + wires change listener)
   Ax.viz.createOutcomeSelector(predictor, outcomeSelect, function(name) {
     selectedOutcome = name; render();
   });

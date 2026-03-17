@@ -40,7 +40,7 @@ build_demos.js          # Node.js build script
 - **Supports**: LEQ and GEQ constraints, minimize/maximize objectives
 - **Rendering**: Canvas radar chart
 
-### 4. scatteroid — BO Cockpit
+### 4. scatteroid — Ax Cockpit
 
 - **Default fixture**: None (generates semi-synthetic VSIP BO experiment on-the-fly)
 - **Features**: Multi-batch BO visualization with Sobol init (8 pts), qEHVI batch (5 completed), and 5 pending candidates. Generation method color coding, constraint bound dashed lines on deltoid (converted to relative space), constraint violation indicators, candidate editing/creation, JSON export, batch filter dropdown. Relativized predictions vs status quo, CI crosshairs, distance-based opacity.

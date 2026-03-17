@@ -6,7 +6,7 @@ return `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>axjs — BO Cockpit</title>
+<title>axjs — Ax Cockpit</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -108,7 +108,7 @@ button:hover { background: #252528; }
 </head>
 <body>
 
-<h1>${axHomeLink}BO Cockpit — Multi-Objective VSIP</h1>
+<h1>${axHomeLink}Ax Cockpit — Multi-Objective VSIP</h1>
 <p class="subtitle" id="subtitle">Loading...</p>
 
 <div class="controls">
