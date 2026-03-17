@@ -161,6 +161,11 @@
       "description": "C2DTLZ2: 4D, 2 objectives + 1 constraint, constrained MOO"
     },
     {
+      "name": "cockpit_c2dtlz2",
+      "file": "cockpit_c2dtlz2.json",
+      "description": "Cockpit: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates"
+    },
+    {
       "name": "discbrake_constrained_moo",
       "file": "discbrake_constrained_moo.json",
       "description": "DiscBrake: 4D, 2 obj + 4 constraints, engineering MOO"

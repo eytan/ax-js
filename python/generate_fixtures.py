@@ -687,6 +687,31 @@ FIXTURE_SPECS = [
         objectives=[{"name": "y", "minimize": True}],
         description="TrajectoryPlanning: 30D, high-dimensional single objective",
     ),
+    # 46. Cockpit: multi-batch MOO with observations + candidates metadata
+    FixtureSpec(
+        name="cockpit_c2dtlz2",
+        benchmark="C2DTLZ2",
+        model_class="ModelListGP",
+        n_train=13,  # 8 Sobol + 5 qEHVI (completed)
+        n_test=10,
+        seed=200,
+        n_outcomes=3,
+        negate_benchmark=False,
+        ax_level=True,
+        outcome_names=["f0", "f1", "c0"],
+        param_names=["x0", "x1", "x2", "x3"],
+        objectives=[
+            {"name": "f0", "minimize": True},
+            {"name": "f1", "minimize": True},
+        ],
+        outcome_constraints=[{"name": "c0", "bound": 0.0, "op": "GEQ"}],
+        objective_thresholds=[
+            {"name": "f0", "bound": 1.1, "op": "LEQ"},
+            {"name": "f1", "bound": 1.1, "op": "LEQ"},
+        ],
+        status_quo="center",
+        description="Cockpit: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates",
+    ),
 ]
 
 
@@ -694,6 +719,9 @@ FIXTURE_SPECS = [
 
 def _generate_fixture(spec: FixtureSpec, benchmarks: dict) -> dict:
     """Generate a single fixture from spec, dispatching to the appropriate generator."""
+    if spec.ax_level and spec.name.startswith("cockpit_"):
+        from generators.cockpit import generate_cockpit_fixture
+        return generate_cockpit_fixture(spec, benchmarks)
     if spec.ax_level:
         return generate_ax_level_fixture(spec, benchmarks)
     dispatch = {
