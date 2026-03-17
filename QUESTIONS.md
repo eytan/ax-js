@@ -5,7 +5,7 @@ Items marked [DONE] have been resolved; others need input.
 
 ## Resolved
 
-- [DONE] **Package name**: `ax-js` on npm, `Ax` as IIFE global
+- [DONE] **Package name**: `ax-js-platform` on npm, `Ax` as IIFE global
 - [DONE] **License**: MIT, Copyright Meta Platforms, Inc.
 - [DONE] **Three bundles**: `ax.js`, `ax-acquisition.js`, `ax-viz.js`
 - [DONE] **Viz module**: Extracted shared demo utilities into `src/viz/index.ts`
@@ -13,7 +13,7 @@ Items marked [DONE] have been resolved; others need input.
 
 ## For Discussion
 
-### 1. npm name availability
+### 1. [DONE] npm name availability
 The name `ax-js` may already be taken on npm. Alternatives: `@ax-platform/js`, `axjs`, `ax-gp`.
 Need to check `npm view ax-js` before first publish.
 
@@ -49,7 +49,7 @@ No GitHub Actions workflow has been set up yet. A basic CI would run:
 This was deferred per user request but should be added before the first release.
 
 ### 6. Versioning strategy
-Currently at `0.1.0`. Questions:
+Currently at `0.0.1`. Questions:
 - When to bump to `1.0.0`? After Ax team review? After first external user?
 - Should version be tied to Ax/BoTorch compatibility? (Currently tested against BoTorch 0.17.2)
 - SemVer for the TypeScript API, but what about the JSON format? Breaking changes to
@@ -62,21 +62,12 @@ links to work. Options:
 - Include in npm package (increases package size significantly)
 - Separate demo hosting
 
-### 8. `predictRelative` API alignment with Ax
-In Ax, relativization is a post-processing step (`relativize()` in
-`ax.utils.stats.math_utils`), not part of `adapter.predict()`. The adapter always
-returns absolute predictions; display code applies `relativize()` separately based
-on the optimization config.
+### 8. [DONE] `predictRelative` API alignment with Ax
+Resolved: `predictRelative()` was removed from Predictor. Callers use
+`predict()` + `relativizePredictions()` directly, matching Ax's separated pattern.
+`getCovariances()` is available for covariance-aware relativization.
 
-ax-js's `Predictor.predictRelative()` is a convenience that combines `predict()` +
-`relativize()`. This works but diverges from Ax's structure. Options:
-- (a) Keep as convenience method (current)
-- (b) Remove and let callers use `predict()` + `relativize()` directly
-- (c) Integrate into `predict()` based on optimization config flags
-
-The standalone `relativize()` function is already exported from `ax-js` for option (b).
-
-### 9. Embeddable viz components
+### 9. [PARTIAL] Embeddable viz components
 The `ax-js/viz` module currently provides low-level building blocks (colormaps,
 data-point rendering, tooltips). A future goal is higher-level embeddable components
 (e.g., "render a response surface into this div") that users can drop into their

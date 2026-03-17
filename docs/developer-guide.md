@@ -303,6 +303,6 @@ is the only file that needs updating.
 | Python extraction | `python/_extraction.py` |
 | Python export API | `python/axjs_export.py` |
 | Fixture generator | `python/generate_fixtures.py` |
-| Data model schema | `docs/FORMAT.md` |
+| Data model schema | `docs/data-model.md` |
 | Data model comparison | `docs/ax-js_vs_ax.md` |
 | Testing guide | `docs/testing.md` |

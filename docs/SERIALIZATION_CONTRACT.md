@@ -27,7 +27,7 @@ separate metadata, client-side predictions are in the wrong space.
 
 ## Current parity evidence
 
-21 fixtures verify numerical parity at Float64 precision against BoTorch 0.17.2:
+46 fixtures verify numerical parity at Float64 precision against BoTorch 0.17.2:
 
 | Model type | Fixtures | Worst discrepancy |
 |---|---|---|
@@ -282,9 +282,9 @@ src/
   models/types.ts        # JSON schema (TypeScript types)
   io/deserialize.ts      # JSON → model objects (with validation)
   transforms/outcome.ts  # Outcome untransforms (Standardize, Log, Bilog, Power, Chained)
-  transforms/adapter.ts  # Adapter transform metadata types
+  transforms/outcome.ts  # Outcome untransforms (Standardize, Log, Bilog, Power, Chained)
 
 test/
-  fixtures/              # 21 JSON fixtures with BoTorch reference predictions
+  fixtures/              # 46 JSON fixtures with BoTorch reference predictions
   integration/botorch_parity.test.ts  # Parity test harness (1e-5 tolerance ceiling)
 ```

@@ -422,26 +422,6 @@ export function setupFileUpload(
   });
 }
 
-/**
- * Render a 2D heatmap onto a canvas context from a flat array of values.
- *
- * The values array has length `gridW * gridH`, laid out in row-major order
- * (row 0 first). Each value is mapped through `colorFn` after normalizing
- * to [0, 1] via `(val - minVal) / (maxVal - minVal)`.
- *
- * The output fills the full `canvasW x canvasH` pixel region, stretching
- * grid cells evenly.
- *
- * @param ctx - Canvas 2D rendering context.
- * @param values - Flat row-major array of length `gridW * gridH`.
- * @param gridW - Number of grid columns.
- * @param gridH - Number of grid rows.
- * @param canvasW - Output pixel width.
- * @param canvasH - Output pixel height.
- * @param colorFn - Maps a normalized [0,1] value to an RGB triplet.
- * @param minVal - Value that maps to t=0.
- * @param maxVal - Value that maps to t=1.
- */
 // ── Embeddable render functions ───────────────────────────────────────────
 
 /** Structural type for the predictor methods used by render functions. */
@@ -753,6 +733,26 @@ export function renderOptimizationTrace(
   container.appendChild(svg);
 }
 
+/**
+ * Render a 2D heatmap onto a canvas context from a flat array of values.
+ *
+ * The values array has length `gridW * gridH`, laid out in row-major order
+ * (row 0 first). Each value is mapped through `colorFn` after normalizing
+ * to [0, 1] via `(val - minVal) / (maxVal - minVal)`.
+ *
+ * The output fills the full `canvasW x canvasH` pixel region, stretching
+ * grid cells evenly.
+ *
+ * @param ctx - Canvas 2D rendering context.
+ * @param values - Flat row-major array of length `gridW * gridH`.
+ * @param gridW - Number of grid columns.
+ * @param gridH - Number of grid rows.
+ * @param canvasW - Output pixel width.
+ * @param canvasH - Output pixel height.
+ * @param colorFn - Maps a normalized [0,1] value to an RGB triplet.
+ * @param minVal - Value that maps to t=0.
+ * @param maxVal - Value that maps to t=1.
+ */
 export function renderHeatmap(
   ctx: CanvasRenderingContext2D,
   values: number[],

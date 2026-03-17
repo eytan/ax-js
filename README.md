@@ -1,4 +1,4 @@
-# ax-js
+# ax-js <sub><sup>npm: `ax-js-platform`</sup></sub>
 
 [![Version](https://img.shields.io/badge/version-0.0.1-blue.svg)](https://github.com/eytan/ax-js-platform)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -104,7 +104,7 @@ Interactive demos are in the [demo/](demo/) directory. Clone the repo, run `npm 
 
 When using script tags, load `ax.js` first — the other scripts extend the `Ax` namespace.
 
-The viz module (`ax-js/viz`) provides reusable building blocks for embedding GP visualizations: colormaps (viridis, plasma), data-point rendering, colorbar drawing, fixture normalization, and search-space parameter utilities. See [docs/developer-guide.md](docs/developer-guide.md) for API details.
+The viz module (`ax-js-platform/viz`) provides reusable building blocks for embedding GP visualizations: colormaps (viridis, plasma), data-point rendering, colorbar drawing, fixture normalization, and search-space parameter utilities. See [docs/developer-guide.md](docs/developer-guide.md) for API details.
 
 ## Development
 

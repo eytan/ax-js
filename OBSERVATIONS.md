@@ -67,4 +67,4 @@ BoTorch's `Log` outcome transform uses exact log-normal distribution formulas: `
 
 ### Relativization Ignores Posterior Covariance
 
-Ax's `relativize()` always passes `cov_means=0`, treating test and control predictions as independent. For GP models, predictions at the test and status quo points are typically positively correlated. Ignoring this covariance makes relative effect confidence intervals wider than necessary (conservative). ax-js uses model covariance by default for tighter CIs — this is an intentional improvement.
+Ax's `relativize()` always passes `cov_means=0`, treating test and control predictions as independent. For GP models, predictions at the test and status quo points are typically positively correlated. Ignoring this covariance makes relative effect confidence intervals wider than necessary (conservative). ax-js exports `getCovariances()` on the Predictor for covariance-aware relativization via `relativizePredictions()`. This enables tighter CIs than Ax's default `cov_means=0`.

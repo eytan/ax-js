@@ -1,6 +1,7 @@
 node_modules/
 dist/
 api-docs/
+.claude/
 demo/lib/
 *.tsbuildinfo
 __pycache__/

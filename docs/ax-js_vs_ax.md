@@ -142,7 +142,6 @@ These are Predictor convenience methods that go beyond Ax's adapter:
 | `getLengthscales()` | Recursive kernel tree walk | Manual: `model.covar_module.base_kernel.lengthscale` |
 | `rankDimensionsByImportance()` | Sorted by lengthscale | `get_feature_importances_from_botorch_model()` (similar but more complex) |
 | `kernelCorrelation()` | Point-to-point kernel similarity | Not available as a simple API |
-| `getClosestTrainingPoint()` | Nearest point in normalized space | Not available |
 | Client-side acquisition optimization | UCB, EI, LogEI, Thompson, EUBO + L-BFGS | Server-side only via `get_next_trials()` |
 
 ---
@@ -261,7 +260,7 @@ The operation set would be:
 ### Completed cleanup
 
 1. **~~Remove `acquisition_value` and `predicted` from `Candidate`~~** — Done. Dead type
-   surface removed from `src/models/types.ts` and `docs/FORMAT.md`.
+   surface removed from `src/models/types.ts` and `docs/data-model.md`.
 
 2. **~~Parameter constraints not exported~~** — Done. `ParameterConstraint` interface added
    to `src/models/types.ts`, `_extract_parameter_constraints()` added to `axjs_export.py`,
@@ -310,11 +309,11 @@ For follow-up action planning, here are the key files and what they'd need to ch
 | `src/predictor.ts` | `Predictor` class -- predict, getCovariances, getTrainingData, loocv, getLengthscales, etc. | Candidate creation API, acqf integration, validation |
 | `src/index.ts` | Public API surface (~20 exports) | Exposing new types/methods |
 | `src/acquisition/optimize.ts` | `optimizeAcqf()` -- random search + projected L-BFGS | Bridge to Predictor |
-| `src/acquisition/acqf.ts` | UCB, EI, LogEI acquisition function implementations | Acqf config from Ax |
+| `src/acquisition/ (ucb.ts, log_ei.ts, thompson.ts, eubo.ts)` | UCB, EI, LogEI acquisition function implementations | Acqf config from Ax |
 | `src/acquisition/thompson.ts` | Thompson sampling | -- |
 | `src/acquisition/eubo.ts` | EUBO (preference-based) | -- |
 | `src/transforms/relativize.ts` | `relativize()`, `relativizePredictions()` | Relative constraints |
-| `docs/FORMAT.md` | Canonical schema documentation | Must update for any schema changes |
+| `docs/data-model.md` | Canonical schema documentation | Must update for any schema changes |
 
 ### Python (export side)
 

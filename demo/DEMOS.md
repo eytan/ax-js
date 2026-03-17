@@ -56,21 +56,21 @@ build_demos.js          # Node.js build script
 - **Data flow**: `predictor.getTrainingData()` → observed Y; `predictor.predict(X)` → predicted mean/variance
 - **Rendering**: Canvas
 
-### 7. feature_importance — Dimension Importance Bar Chart
+### 6. feature_importance — Dimension Importance Bar Chart
 
 - **Default fixture**: `penicillin_modellist.json`
 - **Features**: Horizontal bar chart of 1/lengthscale per dimension, outcome selector, single-outcome and all-outcomes view modes
 - **Data flow**: `predictor.rankDimensionsByImportance(outcome)` → sorted bars
 - **Rendering**: Canvas
 
-### 8. optimization_trace — Trial Progression
+### 7. optimization_trace — Trial Progression
 
 - **Default fixture**: `penicillin_modellist.json`
 - **Features**: Line chart of trial value vs trial index, running best-so-far step function (purple), highlighted best-setting trials, minimize/maximize toggle via `optimization_config`
 - **Data flow**: `predictor.getTrainingData()` → Y values as sequential trials
 - **Rendering**: Canvas
 
-### 9. bayesian_optimization — Live BO with Thompson Sampling
+### 8. bayesian_optimization — Live BO with Thompson Sampling
 
 - **Default fixture**: None (fits GP from scratch via MLL optimization)
 - **Features**: Real-time BO animation on 2D test functions, test problem dropdown (Branin, Six-Hump Camel, Ackley, Rosenbrock), Thompson Sampling via Random Fourier Features (D=256), MAP estimation with priors + multi-restart Adam (4 inits), LOO cross-validation scatter plot with R^2, click-to-highlight nearest training point with tooltip
@@ -78,7 +78,7 @@ build_demos.js          # Node.js build script
 - **Hyperparameter fitting**: Analytic MLL gradients, MAP priors (log-normal on noise/lengthscales/outputscale), 4 random restarts with 200 Adam steps each
 - **Rendering**: Canvas (3 heatmaps: true function, posterior mean, predictive std; plus LOO scatter)
 
-### 10. preference_explorer — BOPE (Preference Learning)
+### 9. preference_explorer — BOPE (Preference Learning)
 
 - **Default fixture**: None (fits PairwiseGP from scratch via Laplace approximation)
 - **Features**: Interactive 4D pairwise preference learning, two modes (auto with test functions, human with visual stimuli), two query strategies (EUBO default, MaxMean-vs-MaxVar), utility and uncertainty heatmaps with dimension sliders, convergence + self-consistency plot, comparison history, stimulus preview on hover
@@ -87,13 +87,6 @@ build_demos.js          # Node.js build script
 - **Stimulus types**: 6 parameterized 4D visual patterns (Plasma Waves, Op Art, Kaleidoscope, Nebula, Interference, Terrain) for human mode. Each parameter controls a distinct visual aspect
 - **Slice visualization**: Heatmaps show x0-x1 slice; sliders control x2, x3 values. Data point opacity scales with kernel distance in slice dimensions
 - **Rendering**: Canvas (2 heatmaps: utility mean viridis + uncertainty plasma, convergence dual-axis chart, stimulus canvases)
-
-### 11. quickstart — API Reference & Live Demo
-
-- **Default fixture**: `penicillin_modellist.json`
-- **Features**: Syntax-highlighted code examples, method/property tables, demo grid linking to all other demos, live section executing Predictor methods on the fixture
-- **Purpose**: Onboarding page for Ax/BoTorch team members
-- **Rendering**: HTML/CSS (no canvas)
 
 ## Shared Visualization Utilities (`Ax.viz`)
 
