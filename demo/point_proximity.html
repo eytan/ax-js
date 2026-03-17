@@ -1890,10 +1890,15 @@ var Ax = (() => {
 
   // src/predictor.ts
   var Predictor = class {
+    /** Ordered metric/outcome names (matches sub-model order for ModelListGP). */
     outcomeNames;
+    /** Ordered parameter names from the search space definition. */
     paramNames;
+    /** Per-parameter [lower, upper] bounds from the search space. */
     paramBounds;
+    /** Full parameter specifications including type, log_scale, etc. */
     paramSpecs;
+    /** Status quo baseline point for relativization, or null if not defined. */
     statusQuoPoint;
     model;
     _state;
@@ -1927,9 +1932,16 @@ var Ax = (() => {
     /**
      * Predict at one or more points (raw parameter space).
      * Points are positional arrays matching search_space parameter order.
-     * The model's input_transform handles normalization if present.
+     * The model's input_transform handles normalization internally.
      *
-     * Returns predictions keyed by outcome name.
+     * @returns Predictions keyed by outcome name.
+     *
+     * @example
+     * ```ts
+     * const preds = predictor.predict([[0.5, 1.0, 3.0]]);
+     * const { mean, variance } = preds["accuracy"];
+     * console.log(`mean=${mean[0]}, std=${Math.sqrt(variance[0])}`);
+     * ```
      */
     predict(points) {
       if (this.model instanceof ModelListGP) {
@@ -2273,7 +2285,7 @@ var Ax = (() => {
     }
     for (let idx = 0; idx < models.length; idx++) {
       const m = models[idx];
-      const prefix = models.length > 1 ? `[axjs] model ${idx}: ` : "[axjs] ";
+      const prefix = models.length > 1 ? `[ax-js] model ${idx}: ` : "[ax-js] ";
       if (m.input_transform) {
         const d = m.train_X[0]?.length ?? 0;
         if (m.input_transform.offset.length !== d) {
