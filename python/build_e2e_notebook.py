@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
-"""
-Build an end-to-end demo notebook: Ax experiment → ax-js visualization.
-
-Usage:
-    python python/build_e2e_notebook.py
-    # or: npm run build:e2e
-
-Output:
-    demo/ax-js-e2e.ipynb  — executable notebook (run in Jupyter)
-"""
-
-from __future__ import annotations
+"""Build end-to-end demo notebook: Ax experiment → ax-js plots."""
 
 from pathlib import Path
-
 import nbformat
 from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
 
@@ -28,12 +16,11 @@ def build_notebook() -> nbformat.NotebookNode:
 
     nb.cells.append(new_markdown_cell(
         "# ax-js End-to-End Demo\n\n"
-        "Set up an Ax experiment, run Bayesian optimization, and visualize "
-        "the fitted GP — all client-side.\n\n"
+        "Create an Ax experiment, run BO, and visualize the fitted GP.\n\n"
         "**Requirements**: `pip install ax-platform botorch`"
     ))
 
-    nb.cells.append(new_markdown_cell("## 1. Create Experiment & Run BO"))
+    nb.cells.append(new_markdown_cell("## 1. Run Bayesian Optimization"))
     nb.cells.append(new_code_cell(
         "from ax.api import Client\n"
         "from ax.api.configs import RangeParameterConfig\n"
@@ -59,30 +46,25 @@ def build_notebook() -> nbformat.NotebookNode:
         "print(f'Completed 25 trials')"
     ))
 
-    nb.cells.append(new_markdown_cell("## 2. Load ax-js"))
+    nb.cells.append(new_markdown_cell("## 2. Visualize"))
     nb.cells.append(new_code_cell(
         "import sys; sys.path.insert(0, 'python')\n"
         "from axjs_jupyter import (\n"
-        "    setup_axjs,\n"
         "    slice_plot, response_surface,\n"
         "    feature_importance, cross_validation, optimization_trace,\n"
-        ")\n"
-        "\n"
-        "setup_axjs(client)"
+        ")"
     ))
 
-    nb.cells.append(new_markdown_cell("## 3. Visualize"))
-
-    nb.cells.append(new_code_cell("slice_plot()"))
-    nb.cells.append(new_code_cell("response_surface()"))
-    nb.cells.append(new_code_cell("feature_importance()"))
-    nb.cells.append(new_code_cell("cross_validation()"))
-    nb.cells.append(new_code_cell("optimization_trace()"))
+    nb.cells.append(new_code_cell("slice_plot(client)"))
+    nb.cells.append(new_code_cell("response_surface(client)"))
+    nb.cells.append(new_code_cell("feature_importance(client)"))
+    nb.cells.append(new_code_cell("cross_validation(client)"))
+    nb.cells.append(new_code_cell("optimization_trace(client)"))
 
     nb.cells.append(new_markdown_cell(
         "---\n"
-        "That's it — five one-liners to go from a fitted Ax experiment to "
-        "interactive GP diagnostics. All rendering happens in JavaScript."
+        "Five one-liners. Each call exports the fitted GP from the Ax Client "
+        "and renders an interactive visualization — all client-side JavaScript."
     ))
 
     return nb

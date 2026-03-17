@@ -1,23 +1,20 @@
 """
 Jupyter notebook integration for ax-js visualizations.
 
-Renders interactive GP visualizations in Jupyter cells. The JS bundles
-are inlined so notebooks work offline and export to standalone HTML.
+Each plot function accepts an Ax Client (or ExperimentState dict) and
+renders an interactive visualization in the current Jupyter cell.
+No setup or global state required.
 
 Usage:
-    from axjs_jupyter import setup_axjs, slice_plot, response_surface
+    from axjs_jupyter import slice_plot, response_surface
 
-    # After running an Ax experiment:
-    setup_axjs(client)
+    slice_plot(client)
+    response_surface(client, outcome="accuracy")
+    feature_importance(client)
+    cross_validation(client)
+    optimization_trace(client)
 
-    slice_plot()
-    response_surface()
-    feature_importance()
-    cross_validation()
-    optimization_trace()
-
-Or pass the client per-call:
-    slice_plot(client, outcome="accuracy")
+Requires: IPython, ax-platform (for Client export)
 """
 
 from __future__ import annotations
@@ -30,8 +27,6 @@ from typing import Any, Optional
 _DIST_DIR = Path(__file__).parent / "../dist"
 _AX_JS: Optional[str] = None
 _AX_VIZ_JS: Optional[str] = None
-_STATE: Optional[dict] = None
-_SETUP_DONE = False
 
 
 def _load_bundles() -> tuple[str, str]:
@@ -44,7 +39,7 @@ def _load_bundles() -> tuple[str, str]:
 
 
 def _export(client_or_state: Any) -> dict:
-    """Accept Ax Client, ExperimentState dict, or JSON file path."""
+    """Export an Ax Client to ExperimentState, or pass through a dict."""
     if isinstance(client_or_state, dict):
         return client_or_state
     if isinstance(client_or_state, (str, Path)):
@@ -54,56 +49,22 @@ def _export(client_or_state: Any) -> dict:
     return export_client(client_or_state)
 
 
-def _cid() -> str:
-    return f"axjs_{uuid.uuid4().hex[:8]}"
-
-
-def setup_axjs(client_or_state: Any) -> None:
-    """Load ax-js bundles and export model state. Call once per notebook.
-
-    Args:
-        client_or_state: An ``ax.api.Client``, ``ExperimentState`` dict,
-            or path to a JSON file. The model is exported and stored for
-            subsequent plot calls.
-    """
-    from IPython.display import display, HTML
-
-    global _STATE, _SETUP_DONE
-    _STATE = _export(client_or_state)
+def _render(client_or_state: Any, viz_code: str,
+            width: str = "100%", height: str = "400px") -> str:
+    """Build self-contained HTML for a single visualization cell."""
+    state = _export(client_or_state)
+    state_json = json.dumps(state)
     ax_js, viz_js = _load_bundles()
-
-    display(HTML(
-        f"<script>\n{ax_js}\n{viz_js}\n"
-        f"window.__AXJS_STATE__={json.dumps(_STATE)};\n</script>"
-        '<div style="color:#888;font-size:12px">ax-js loaded.</div>'
-    ))
-    _SETUP_DONE = True
-
-
-def _get_state(client_or_state: Any = None) -> dict:
-    if client_or_state is not None:
-        return _export(client_or_state)
-    if _STATE is not None:
-        return _STATE
-    raise ValueError("No state. Pass client or call setup_axjs(client) first.")
-
-
-def _render(viz_code: str, width: str = "100%", height: str = "400px",
-            use_global_state: bool = True, state: Optional[dict] = None) -> str:
-    cid = _cid()
-    ax_js, viz_js = _load_bundles()
-    bundle = "" if _SETUP_DONE else f"if(!window.Ax){{{ax_js}\n{viz_js}}}"
-    state_line = ("var state=window.__AXJS_STATE__;" if use_global_state
-                  else f"var state={json.dumps(state)};")
+    cid = f"axjs_{uuid.uuid4().hex[:8]}"
 
     return (
         f'<div id="{cid}" style="width:{width};min-height:{height};'
         f'position:relative;background:#0f0f11;border-radius:8px;'
         f'overflow:visible;padding:12px"></div>'
         f'<script>(function(){{'
-        f'{bundle}{state_line}'
+        f'if(!window.Ax){{{ax_js}\n{viz_js}}}'
         f'var c=document.getElementById("{cid}");'
-        f'var p=new Ax.Predictor(state);'
+        f'var p=new Ax.Predictor({state_json});'
         f'{viz_code}'
         f'}})()</script>'
     )
@@ -126,48 +87,68 @@ def _opts(outcome: Optional[str], extra: str = "") -> str:
 # ── Plot functions ─────────────────────────────────────────────────────────
 
 
-def slice_plot(client_or_state: Any = None, *, outcome: Optional[str] = None) -> None:
-    """1D posterior slices for each parameter, sorted by importance."""
-    state = _get_state(client_or_state)
-    use_global = client_or_state is None and _STATE is not None
-    _show(_render(f"Ax.viz.renderSlicePlot(c,p,{{{_opts(outcome)}}});",
-                  height="600px", use_global_state=use_global, state=state))
+def slice_plot(client_or_state: Any, *, outcome: Optional[str] = None) -> None:
+    """1D posterior slices for each parameter, sorted by importance.
+
+    Args:
+        client_or_state: ``ax.api.Client`` or ``ExperimentState`` dict.
+        outcome: Default outcome to display. If None, uses first outcome.
+    """
+    _show(_render(client_or_state,
+                  f"Ax.viz.renderSlicePlot(c,p,{{{_opts(outcome)}}});",
+                  height="600px"))
 
 
-def response_surface(client_or_state: Any = None, *, outcome: Optional[str] = None) -> None:
-    """2D posterior mean heatmap, auto-selects most important dimensions."""
-    state = _get_state(client_or_state)
-    use_global = client_or_state is None and _STATE is not None
-    _show(_render(f"Ax.viz.renderResponseSurface(c,p,{{{_opts(outcome, 'width:460,height:460')}}});",
-                  width="500px", height="520px", use_global_state=use_global, state=state))
+def response_surface(client_or_state: Any, *, outcome: Optional[str] = None) -> None:
+    """2D posterior mean heatmap, auto-selects most important dimensions.
+
+    Args:
+        client_or_state: ``ax.api.Client`` or ``ExperimentState`` dict.
+        outcome: Default outcome to display.
+    """
+    _show(_render(client_or_state,
+                  f"Ax.viz.renderResponseSurface(c,p,{{{_opts(outcome, 'width:460,height:460')}}});",
+                  width="500px", height="520px"))
 
 
-def feature_importance(client_or_state: Any = None, *, outcome: Optional[str] = None) -> None:
-    """Dimension importance from kernel lengthscales."""
-    state = _get_state(client_or_state)
-    use_global = client_or_state is None and _STATE is not None
-    _show(_render(f"Ax.viz.renderFeatureImportance(c,p,{{{_opts(outcome)}}});",
-                  width="500px", height="280px", use_global_state=use_global, state=state))
+def feature_importance(client_or_state: Any, *, outcome: Optional[str] = None) -> None:
+    """Dimension importance from kernel lengthscales.
+
+    Args:
+        client_or_state: ``ax.api.Client`` or ``ExperimentState`` dict.
+        outcome: Default outcome to display.
+    """
+    _show(_render(client_or_state,
+                  f"Ax.viz.renderFeatureImportance(c,p,{{{_opts(outcome)}}});",
+                  width="500px", height="280px"))
 
 
-def cross_validation(client_or_state: Any = None, *, outcome: Optional[str] = None) -> None:
-    """LOO cross-validation: observed vs predicted with CI."""
-    state = _get_state(client_or_state)
-    use_global = client_or_state is None and _STATE is not None
-    _show(_render(f"Ax.viz.renderCrossValidation(c,p,{{{_opts(outcome, 'width:460,height:460')}}});",
-                  width="500px", height="500px", use_global_state=use_global, state=state))
+def cross_validation(client_or_state: Any, *, outcome: Optional[str] = None) -> None:
+    """LOO cross-validation: observed vs predicted with CI.
+
+    Args:
+        client_or_state: ``ax.api.Client`` or ``ExperimentState`` dict.
+        outcome: Default outcome to display.
+    """
+    _show(_render(client_or_state,
+                  f"Ax.viz.renderCrossValidation(c,p,{{{_opts(outcome, 'width:460,height:460')}}});",
+                  width="500px", height="500px"))
 
 
-def optimization_trace(client_or_state: Any = None, *, outcome: Optional[str] = None) -> None:
-    """Trial progression with best-so-far tracking."""
-    state = _get_state(client_or_state)
-    use_global = client_or_state is None and _STATE is not None
-    _show(_render(f"Ax.viz.renderOptimizationTrace(c,p,{{{_opts(outcome, 'width:660,height:380')}}});",
-                  width="700px", height="420px", use_global_state=use_global, state=state))
+def optimization_trace(client_or_state: Any, *, outcome: Optional[str] = None) -> None:
+    """Trial progression with best-so-far tracking.
+
+    Args:
+        client_or_state: ``ax.api.Client`` or ``ExperimentState`` dict.
+        outcome: Default outcome to display.
+    """
+    _show(_render(client_or_state,
+                  f"Ax.viz.renderOptimizationTrace(c,p,{{{_opts(outcome, 'width:660,height:380')}}});",
+                  width="700px", height="420px"))
 
 
-def all_diagnostics(client_or_state: Any = None, *, outcome: Optional[str] = None) -> None:
-    """All diagnostic plots: slice, surface, importance, CV, trace."""
+def all_diagnostics(client_or_state: Any, *, outcome: Optional[str] = None) -> None:
+    """All plots: slice, surface, importance, CV, trace."""
     slice_plot(client_or_state, outcome=outcome)
     response_surface(client_or_state, outcome=outcome)
     feature_importance(client_or_state, outcome=outcome)

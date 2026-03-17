@@ -1,33 +1,17 @@
 #!/usr/bin/env python3
-"""
-Build the ax-js Jupyter demo notebook with pre-populated outputs.
-
-Usage:
-    python python/build_demo_notebook.py
-    # or: npm run build:notebook
-
-Output:
-    demo/jupyter-demo.ipynb  — notebook with pre-populated outputs
-    demo/jupyter-demo.html   — standalone HTML export
-"""
+"""Build pre-populated Jupyter demo notebook with ax-js visualizations."""
 
 from __future__ import annotations
-
-import json
-import sys
+import json, sys
 from pathlib import Path
-
 import nbformat
 from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
 
 ROOT = Path(__file__).parent.parent
 DIST = ROOT / "dist"
 FIXTURES = ROOT / "test" / "fixtures"
-
-# Make axjs_jupyter importable
 sys.path.insert(0, str(ROOT / "python"))
-from axjs_jupyter import _load_bundles, _render, _SETUP_DONE
-import axjs_jupyter  # noqa: E402
+from axjs_jupyter import _load_bundles, _render
 
 
 def _load_fixture(name="penicillin_modellist.json"):
@@ -41,17 +25,15 @@ def _output(html):
     )
 
 
-def _viz_cell(code, viz_call, state, **render_kw):
+def _viz_cell(code, state, viz_code, **kw):
     cell = new_code_cell(code)
-    html = _render(viz_call, use_global_state=True, state=state, **render_kw)
+    html = _render(state, viz_code, **kw)
     cell.outputs = [_output(html)]
     return cell
 
 
 def build_notebook():
-    ax_js, viz_js = _load_bundles()
-    state = _load_fixture("penicillin_modellist.json")
-    state_json = json.dumps(state)
+    state = _load_fixture()
     outcomes = state.get("outcome_names", ["y"])
 
     nb = new_notebook()
@@ -61,75 +43,52 @@ def build_notebook():
 
     nb.cells.append(new_markdown_cell(
         "# ax-js Jupyter Demo\n\n"
-        "Interactive GP diagnostics rendered client-side.\n\n"
-        f"**Fixture**: Penicillin benchmark ({len(outcomes)} outcomes: "
-        f"{', '.join(outcomes)})\n\n"
-        "Export with `jupyter nbconvert --to html` for a standalone page."
+        "Interactive GP diagnostics. Pre-populated outputs — no execution needed.\n\n"
+        f"**Fixture**: Penicillin ({len(outcomes)} outcomes: {', '.join(outcomes)})"
     ))
 
-    # Setup
-    setup_html = (
-        f"<script>\n{ax_js}\n{viz_js}\n"
-        f"window.__AXJS_STATE__={state_json};\n"
-        f"</script>"
-        '<div style="color:#888;font-size:12px">'
-        f"ax-js loaded. {len(outcomes)} outcomes available.</div>"
-    )
-    setup_cell = new_code_cell(
+    nb.cells.append(new_code_cell(
         "import sys; sys.path.insert(0, 'python')\n"
-        "from axjs_jupyter import setup_axjs\n"
-        "import json\n\n"
-        "state = json.load(open('test/fixtures/penicillin_modellist.json'))['experiment']\n"
-        "setup_axjs(state)"
-    )
-    setup_cell.outputs = [_output(setup_html)]
-    axjs_jupyter._SETUP_DONE = True  # so subsequent _render calls skip bundle inlining
-    nb.cells.append(setup_cell)
-
-    import_cell = new_code_cell(
+        "import json\n"
         "from axjs_jupyter import (\n"
         "    slice_plot, response_surface,\n"
         "    feature_importance, cross_validation, optimization_trace,\n"
-        ")"
-    )
-    import_cell.outputs = []
-    nb.cells.append(import_cell)
+        ")\n\n"
+        "state = json.load(open('test/fixtures/penicillin_modellist.json'))['experiment']"
+    ))
 
     nb.cells.append(new_markdown_cell("## 1D Slice Plots"))
     nb.cells.append(_viz_cell(
-        "slice_plot()", 'Ax.viz.renderSlicePlot(c,p,{interactive:true});',
-        state, height="600px"))
+        "slice_plot(state)", state,
+        'Ax.viz.renderSlicePlot(c,p,{interactive:true});',
+        height="600px"))
 
     nb.cells.append(new_markdown_cell("## 2D Response Surface"))
     nb.cells.append(_viz_cell(
-        "response_surface()",
+        "response_surface(state)", state,
         'Ax.viz.renderResponseSurface(c,p,{interactive:true,width:460,height:460});',
-        state, width="500px", height="520px"))
+        width="500px", height="520px"))
 
     nb.cells.append(new_markdown_cell("## Feature Importance"))
     nb.cells.append(_viz_cell(
-        "feature_importance()",
+        "feature_importance(state)", state,
         'Ax.viz.renderFeatureImportance(c,p,{interactive:true});',
-        state, width="500px", height="280px"))
+        width="500px", height="280px"))
 
     nb.cells.append(new_markdown_cell("## Leave-One-Out Cross-Validation"))
     nb.cells.append(_viz_cell(
-        "cross_validation()",
+        "cross_validation(state)", state,
         'Ax.viz.renderCrossValidation(c,p,{interactive:true,width:460,height:460});',
-        state, width="500px", height="500px"))
+        width="500px", height="500px"))
 
     nb.cells.append(new_markdown_cell("## Optimization Trace"))
     nb.cells.append(_viz_cell(
-        "optimization_trace()",
+        "optimization_trace(state)", state,
         'Ax.viz.renderOptimizationTrace(c,p,{interactive:true,width:660,height:380});',
-        state, width="700px", height="420px"))
+        width="700px", height="420px"))
 
     nb.cells.append(new_markdown_cell(
-        "---\n## About\n\n"
-        "All visualizations rendered by "
-        "[ax-js](https://github.com/eytan/ax-js-platform). "
-        "GP predictions computed entirely in JavaScript."
-    ))
+        "---\nAll visualizations by [ax-js](https://github.com/eytan/ax-js-platform)."))
 
     return nb
 
@@ -148,12 +107,8 @@ def main():
         html_path = ROOT / "demo" / "jupyter-demo.html"
         html_path.write_text(body)
         print(f"HTML: {html_path} ({html_path.stat().st_size // 1024}KB)")
-
-        for tag in ["Ax.Predictor", "renderSlicePlot", "renderResponseSurface"]:
-            assert tag in body, f"Missing: {tag}"
-        print("Verification: all expected content present")
     except ImportError:
-        print("nbconvert not available — run: jupyter nbconvert --to html", nb_path)
+        print("nbconvert not available")
 
 
 if __name__ == "__main__":

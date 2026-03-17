@@ -124,10 +124,12 @@ npm run typecheck    # Type-check
 **Pre-built demo** (`demo/jupyter-demo.ipynb`): All diagnostic visualizations with pre-populated outputs — no execution required. Also exported as standalone HTML (`demo/jupyter-demo.html`).
 
 ```python
-# In your own notebook:
-from axjs_jupyter import setup_axjs, display_cross_validation
-setup_axjs()
-display_cross_validation(client, outcome="accuracy")
+# In your own notebook — each function takes the Ax Client directly:
+from axjs_jupyter import slice_plot, response_surface, cross_validation
+
+slice_plot(client)
+response_surface(client, outcome="accuracy")
+cross_validation(client)
 ```
 
 ### Regenerate fixtures
