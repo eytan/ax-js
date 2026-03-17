@@ -43,9 +43,9 @@ def _viz_html(viz_code: str, cid: str, width: str = "100%",
     )
     return (
         f"{title_html}"
-        f'<div id="{cid}" style="width:{width};height:{height};'
+        f'<div id="{cid}" style="width:{width};min-height:{height};'
         f'position:relative;background:#0f0f11;border-radius:8px;'
-        f'overflow:hidden"></div>'
+        f'overflow:visible;padding:12px"></div>'
         f"<script>(function(){{"
         f"var c=document.getElementById('{cid}');"
         f"var p=new Ax.Predictor(window.__AXJS_STATE__);"
