@@ -14,7 +14,7 @@ import { fileURLToPath } from 'url';
 import slicePlot from './demos/slice_plot.js';
 import responseSurface from './demos/response_surface.js';
 import radar from './demos/radar.js';
-import scatteroid from './demos/scatteroid.js';
+import scatteroid from './demos/ax_cockpit.js';
 import crossValidation from './demos/cross_validation.js';
 import featureImportance from './demos/feature_importance.js';
 import optimizationTrace from './demos/optimization_trace.js';
@@ -27,7 +27,7 @@ const demos = [
   ['slice_plot.html', slicePlot],
   ['response_surface.html', responseSurface],
   ['radar.html', radar],
-  ['scatteroid.html', scatteroid],
+  ['ax_cockpit.html', scatteroid],
   ['cross_validation.html', crossValidation],
   ['feature_importance.html', featureImportance],
   ['optimization_trace.html', optimizationTrace],

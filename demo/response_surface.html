@@ -2280,6 +2280,8 @@ var Ax;
     renderFeatureImportance: () => renderFeatureImportance,
     renderHeatmap: () => renderHeatmap,
     renderOptimizationTrace: () => renderOptimizationTrace,
+    renderResponseSurface: () => renderResponseSurface,
+    renderSlicePlot: () => renderSlicePlot,
     setupFileUpload: () => setupFileUpload,
     showTooltip: () => showTooltip,
     viridis: () => viridis
@@ -2818,6 +2820,296 @@ var Ax;
       }
     }
     ctx.putImageData(img, 0, 0);
+  }
+  function renderSlicePlot(container, predictor, options) {
+    const outcome = options?.outcome ?? predictor.outcomeNames[0];
+    const numPoints = options?.numPoints ?? 50;
+    const W = options?.width ?? 350;
+    const H = options?.height ?? 220;
+    const bounds = predictor.paramBounds;
+    const names = predictor.paramNames;
+    const nDim = names.length;
+    const fixedValues = options?.fixedValues?.slice() ?? bounds.map(([lo, hi]) => (lo + hi) / 2);
+    container.style.display = "flex";
+    container.style.flexWrap = "wrap";
+    container.style.gap = "12px";
+    const margin = { top: 24, right: 14, bottom: 32, left: 52 };
+    const pw = W - margin.left - margin.right;
+    const ph = H - margin.top - margin.bottom;
+    for (let dim = 0; dim < nDim; dim++) {
+      const [lo, hi] = bounds[dim];
+      if (lo === hi) continue;
+      const xs = [];
+      for (let i = 0; i < numPoints; i++) {
+        xs.push(lo + (hi - lo) * i / (numPoints - 1));
+      }
+      const testPoints = xs.map((v) => {
+        const pt = fixedValues.slice();
+        pt[dim] = v;
+        return pt;
+      });
+      const pred = predictor.predict(testPoints)[outcome];
+      if (!pred) continue;
+      const means = Array.from(pred.mean);
+      const stds = means.map((_, i) => Math.sqrt(pred.variance[i]));
+      const upper = means.map((m, i) => m + 2 * stds[i]);
+      const lower = means.map((m, i) => m - 2 * stds[i]);
+      let yMin = Math.min(...lower);
+      let yMax = Math.max(...upper);
+      const yPad = 0.06 * (yMax - yMin || 1);
+      yMin -= yPad;
+      yMax += yPad;
+      const sx = (v) => margin.left + (v - lo) / (hi - lo || 1) * pw;
+      const sy = (v) => margin.top + ph - (v - yMin) / (yMax - yMin || 1) * ph;
+      const svg = svgEl("svg", { width: W, height: H });
+      svg.appendChild(
+        Object.assign(
+          svgEl("text", {
+            x: margin.left + pw / 2,
+            y: 15,
+            fill: "#999",
+            "font-size": 13,
+            "text-anchor": "middle"
+          }),
+          { textContent: names[dim] }
+        )
+      );
+      let bandD = `M ${sx(xs[0])} ${sy(upper[0])}`;
+      for (let i = 1; i < xs.length; i++) bandD += ` L ${sx(xs[i])} ${sy(upper[i])}`;
+      for (let i = xs.length - 1; i >= 0; i--) bandD += ` L ${sx(xs[i])} ${sy(lower[i])}`;
+      bandD += " Z";
+      svg.appendChild(svgEl("path", { d: bandD, fill: "rgba(124,154,255,0.15)" }));
+      let lineD = `M ${sx(xs[0])} ${sy(means[0])}`;
+      for (let i = 1; i < xs.length; i++) lineD += ` L ${sx(xs[i])} ${sy(means[i])}`;
+      svg.appendChild(
+        svgEl("path", {
+          d: lineD,
+          stroke: "#7c9aff",
+          "stroke-width": 2,
+          fill: "none"
+        })
+      );
+      const nYTicks = 4;
+      for (let t = 0; t <= nYTicks; t++) {
+        const v = yMin + (yMax - yMin) * t / nYTicks;
+        svg.appendChild(
+          svgEl("line", {
+            x1: margin.left,
+            x2: margin.left + pw,
+            y1: sy(v),
+            y2: sy(v),
+            stroke: "rgba(255,255,255,0.06)"
+          })
+        );
+        svg.appendChild(
+          Object.assign(
+            svgEl("text", {
+              x: margin.left - 5,
+              y: sy(v) + 3,
+              fill: "#555",
+              "font-size": 10,
+              "text-anchor": "end"
+            }),
+            { textContent: v.toFixed(2) }
+          )
+        );
+      }
+      const nXTicks = 4;
+      for (let t = 0; t <= nXTicks; t++) {
+        const v = lo + (hi - lo) * t / nXTicks;
+        svg.appendChild(
+          Object.assign(
+            svgEl("text", {
+              x: sx(v),
+              y: margin.top + ph + 14,
+              fill: "#555",
+              "font-size": 10,
+              "text-anchor": "middle"
+            }),
+            { textContent: v.toFixed(2) }
+          )
+        );
+      }
+      svg.appendChild(
+        Object.assign(
+          svgEl("text", {
+            x: margin.left + pw / 2,
+            y: H - 4,
+            fill: "#888",
+            "font-size": 11,
+            "text-anchor": "middle"
+          }),
+          { textContent: names[dim] }
+        )
+      );
+      container.appendChild(svg);
+    }
+  }
+  function renderResponseSurface(container, predictor, options) {
+    const outcome = options?.outcome ?? predictor.outcomeNames[0];
+    const dimX = options?.dimX ?? 0;
+    const dimY = options?.dimY ?? Math.min(1, predictor.paramNames.length - 1);
+    const gridSize = options?.gridSize ?? 30;
+    const bounds = predictor.paramBounds;
+    const names = predictor.paramNames;
+    const fixedValues = options?.fixedValues?.slice() ?? bounds.map(([lo, hi]) => (lo + hi) / 2);
+    const ML = 48;
+    const MT = 10;
+    const MB = 38;
+    const MR = 10;
+    const defaultW = options?.width ?? 420;
+    const defaultH = options?.height ?? 420;
+    const containerW = container.clientWidth || parseInt(container.style.width) || defaultW;
+    const containerH = container.clientHeight || parseInt(container.style.height) || defaultH;
+    const totalW = Math.min(containerW, defaultW);
+    const totalH = Math.min(containerH, defaultH);
+    const N = Math.min(totalW - ML - MR, totalH - MT - MB);
+    const CW = N + ML + MR;
+    const CH = N + MT + MB;
+    const [xlo, xhi] = bounds[dimX];
+    const [ylo, yhi] = bounds[dimY];
+    const testPoints = [];
+    for (let gj = 0; gj < gridSize; gj++) {
+      for (let gi = 0; gi < gridSize; gi++) {
+        const xv = xlo + (xhi - xlo) * gi / (gridSize - 1);
+        const yv = yhi - (yhi - ylo) * gj / (gridSize - 1);
+        const pt = fixedValues.slice();
+        pt[dimX] = xv;
+        pt[dimY] = yv;
+        testPoints.push(pt);
+      }
+    }
+    const pred = predictor.predict(testPoints)[outcome];
+    if (!pred) {
+      container.textContent = "No prediction data for outcome: " + outcome;
+      return;
+    }
+    const means = Array.from(pred.mean);
+    const meanMin = Math.min(...means);
+    const meanMax = Math.max(...means);
+    const canvas = document.createElement("canvas");
+    canvas.width = CW;
+    canvas.height = CH;
+    canvas.style.display = "block";
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const heatImg = ctx.createImageData(N, N);
+    const range = meanMax - meanMin || 1;
+    const cellW = N / gridSize;
+    const cellH = N / gridSize;
+    for (let k = 0; k < means.length; k++) {
+      const gi = k % gridSize;
+      const gj = Math.floor(k / gridSize);
+      const t = Math.max(0, Math.min(1, (means[k] - meanMin) / range));
+      const rgb = viridis(t);
+      const x0 = Math.round(gi * cellW);
+      const y0 = Math.round(gj * cellH);
+      const x1 = Math.round((gi + 1) * cellW);
+      const y1 = Math.round((gj + 1) * cellH);
+      for (let py = y0; py < y1; py++) {
+        for (let px = x0; px < x1; px++) {
+          const idx = (py * N + px) * 4;
+          heatImg.data[idx] = rgb[0];
+          heatImg.data[idx + 1] = rgb[1];
+          heatImg.data[idx + 2] = rgb[2];
+          heatImg.data[idx + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(heatImg, ML, MT);
+    ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 1;
+    const nTicks = 4;
+    ctx.textAlign = "center";
+    for (let ti = 0; ti <= nTicks; ti++) {
+      const v = xlo + (xhi - xlo) * ti / nTicks;
+      const tx = ML + ti * N / nTicks;
+      ctx.beginPath();
+      ctx.moveTo(tx, MT + N);
+      ctx.lineTo(tx, MT + N + 4);
+      ctx.stroke();
+      ctx.fillText(v.toFixed(2), tx, MT + N + 15);
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText(names[dimX], ML + N / 2, MT + N + 30);
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.textAlign = "right";
+    for (let ti = 0; ti <= nTicks; ti++) {
+      const v = ylo + (yhi - ylo) * ti / nTicks;
+      const ty = MT + (1 - ti / nTicks) * N;
+      ctx.beginPath();
+      ctx.moveTo(ML - 4, ty);
+      ctx.lineTo(ML, ty);
+      ctx.stroke();
+      ctx.fillText(v.toFixed(2), ML - 6, ty + 3);
+    }
+    ctx.save();
+    ctx.translate(12, MT + N / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText(names[dimY], 0, 0);
+    ctx.restore();
+    const td = predictor.getTrainingData(outcome);
+    if (td.X.length > 0) {
+      const xRange = xhi - xlo || 1;
+      const yRange = yhi - ylo || 1;
+      for (let i = 0; i < td.X.length; i++) {
+        const px = ML + (td.X[i][dimX] - xlo) / xRange * N;
+        const py = MT + (1 - (td.X[i][dimY] - ylo) / yRange) * N;
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, 2 * Math.PI);
+        ctx.strokeStyle = "rgba(255,255,255,0.7)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(px, py, 2.5, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(255,60,60,0.85)";
+        ctx.fill();
+      }
+    }
+    container.appendChild(canvas);
+    const cbRow = document.createElement("div");
+    cbRow.style.display = "flex";
+    cbRow.style.alignItems = "center";
+    cbRow.style.gap = "6px";
+    cbRow.style.marginTop = "4px";
+    cbRow.style.paddingLeft = ML + "px";
+    cbRow.style.width = N + ML + "px";
+    const cbLo = document.createElement("span");
+    cbLo.style.fontSize = "11px";
+    cbLo.style.color = "#666";
+    cbLo.style.minWidth = "40px";
+    cbLo.textContent = meanMin.toFixed(2);
+    const cbCanvas = document.createElement("canvas");
+    cbCanvas.style.flex = "1";
+    cbCanvas.style.height = "14px";
+    cbCanvas.style.borderRadius = "3px";
+    cbCanvas.height = 14;
+    cbCanvas.width = N;
+    const cbCtx = cbCanvas.getContext("2d");
+    if (cbCtx) {
+      for (let i = 0; i < N; i++) {
+        const rgb = viridis(i / N);
+        cbCtx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        cbCtx.fillRect(i, 0, 1, 14);
+      }
+    }
+    const cbHi = document.createElement("span");
+    cbHi.style.fontSize = "11px";
+    cbHi.style.color = "#666";
+    cbHi.style.minWidth = "40px";
+    cbHi.style.textAlign = "right";
+    cbHi.textContent = meanMax.toFixed(2);
+    cbRow.appendChild(cbLo);
+    cbRow.appendChild(cbCanvas);
+    cbRow.appendChild(cbHi);
+    container.appendChild(cbRow);
   }
   return __toCommonJS(viz_exports);
 })();
