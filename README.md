@@ -1,6 +1,6 @@
 # ax-js
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/eytan/ax-js)
+[![Version](https://img.shields.io/badge/version-0.0.1-blue.svg)](https://github.com/eytan/ax-js-platform)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4+-blue.svg)](https://www.typescriptlang.org/)
 

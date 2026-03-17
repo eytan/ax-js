@@ -1,6 +1,6 @@
 {
   "name": "ax-js-platform",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Client-side Gaussian process predictions mirroring Ax/BoTorch — prediction, visualization, and acquisition in the browser",
   "type": "module",
   "main": "dist/index.cjs",
@@ -38,11 +38,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/eytan/ax-js.git"
+    "url": "https://github.com/eytan/ax-js-platform.git"
   },
-  "homepage": "https://github.com/eytan/ax-js",
+  "homepage": "https://github.com/eytan/ax-js-platform",
   "bugs": {
-    "url": "https://github.com/eytan/ax-js/issues"
+    "url": "https://github.com/eytan/ax-js-platform/issues"
   },
   "keywords": [
     "bayesian-optimization",
