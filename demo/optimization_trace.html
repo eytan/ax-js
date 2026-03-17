@@ -1659,104 +1659,6 @@ var Ax = (() => {
     }
   }
 
-  // src/transforms/relativize.ts
-  function relativize(meanT, semT, meanC, semC, opts = {}) {
-    const {
-      covariance = 0,
-      biasCorrection = true,
-      asPercent = true,
-      controlAsConstant = false
-    } = opts;
-    if (meanT === meanC && semT === semC) {
-      return { mean: 0, sem: 0 };
-    }
-    const absMC = Math.abs(meanC);
-    if (absMC === 0) {
-      throw new Error(
-        "Cannot relativize: control mean is zero. Relative effects are undefined when the baseline is zero."
-      );
-    }
-    let rHat;
-    let sem;
-    if (controlAsConstant) {
-      rHat = (meanT - meanC) / absMC;
-      sem = semT / absMC;
-    } else {
-      rHat = (meanT - meanC) / absMC;
-      if (biasCorrection) {
-        rHat -= meanT * semC * semC / (absMC * absMC * absMC);
-      }
-      const c = meanT / meanC;
-      const varT = semT * semT;
-      const varC = semC * semC;
-      const relVar = (varT - 2 * c * covariance + c * c * varC) / (meanC * meanC);
-      sem = Math.sqrt(Math.max(0, relVar));
-    }
-    if (asPercent) {
-      rHat *= 100;
-      sem *= 100;
-    }
-    return { mean: rHat, sem };
-  }
-  function unrelativize(relMean, relSem, meanC, semC, opts = {}) {
-    const {
-      covariance = 0,
-      biasCorrection = true,
-      asPercent = true,
-      controlAsConstant = false
-    } = opts;
-    let rHat = relMean;
-    let rSem = relSem;
-    if (asPercent) {
-      rHat /= 100;
-      rSem /= 100;
-    }
-    const absMC = Math.abs(meanC);
-    if (absMC === 0) {
-      throw new Error("Cannot unrelativize: control mean is zero.");
-    }
-    let meanT;
-    let semT;
-    if (controlAsConstant) {
-      meanT = rHat * absMC + meanC;
-      semT = rSem * absMC;
-    } else {
-      meanT = rHat * absMC + meanC;
-      if (biasCorrection) {
-        const corrFactor = 1 - semC * semC / (absMC * absMC);
-        if (Math.abs(corrFactor) < 1e-15) {
-          throw new Error(
-            "Cannot unrelativize with bias correction: control SEM \u2248 |control mean|."
-          );
-        }
-        meanT /= corrFactor;
-      }
-      const c = meanT / meanC;
-      const relVar = rSem * rSem;
-      const varC = semC * semC;
-      const varT = relVar * meanC * meanC + 2 * c * covariance - c * c * varC;
-      semT = Math.sqrt(Math.max(0, varT));
-    }
-    return { mean: meanT, sem: semT };
-  }
-  function relativizePredictions(means, variances, sqMean, sqVariance, opts = {}, covariances) {
-    const n = means.length;
-    const relMeans = new Float64Array(n);
-    const relVariances = new Float64Array(n);
-    const sqSem = Math.sqrt(sqVariance);
-    for (let i = 0; i < n; i++) {
-      const sem = Math.sqrt(variances[i]);
-      const cov = covariances ? covariances[i] : 0;
-      const result = relativize(means[i], sem, sqMean, sqSem, {
-        ...opts,
-        covariance: cov
-      });
-      relMeans[i] = result.mean;
-      relVariances[i] = result.sem * result.sem;
-    }
-    return { mean: relMeans, variance: relVariances };
-  }
-
   // src/predictor.ts
   var Predictor = class {
     /** Ordered metric/outcome names (matches sub-model order for ModelListGP). */
@@ -1847,40 +1749,13 @@ var Ax = (() => {
       };
     }
     /**
-     * Predict relative effects (% change vs status quo) at given points.
-     * Requires status_quo to be set in ExperimentState.
-     * Returns predictions keyed by outcome name with relativized mean/variance.
+     * Get covariances between predictions at each test point and the status quo.
+     * Returns a Float64Array of length `points.length`, where element `i` is the
+     * posterior covariance between `points[i]` and `statusQuoPoint` for the given
+     * outcome. Useful for covariance-aware relativization via `relativizePredictions()`.
      *
-     * By default, uses model covariance between test and status quo points for
-     * tighter confidence intervals. Pass `useCovariance: false` to assume
-     * independence (matches Ax's default `cov_means=0` behavior).
-     */
-    predictRelative(points, opts) {
-      if (!this.statusQuoPoint) {
-        throw new Error("Cannot relativize: no status_quo defined");
-      }
-      const absPreds = this.predict(points);
-      const sqPreds = this.predict([this.statusQuoPoint]);
-      const useCovariance = opts?.useCovariance !== false;
-      const out = {};
-      for (const name of Object.keys(absPreds)) {
-        const sqMean = sqPreds[name].mean[0];
-        const sqVar = sqPreds[name].variance[0];
-        const covariances = useCovariance ? this.getCovariances(name, points) : void 0;
-        out[name] = relativizePredictions(
-          absPreds[name].mean,
-          absPreds[name].variance,
-          sqMean,
-          sqVar,
-          opts,
-          covariances
-        );
-      }
-      return out;
-    }
-    /**
-     * Get covariances between predictions at points and the status quo.
-     * Used internally by predictRelative for tighter confidence intervals.
+     * Returns `undefined` if no status quo is defined or the model does not
+     * support `predictCovarianceWith`.
      */
     getCovariances(outcomeName, points) {
       if (!this.statusQuoPoint) return void 0;
@@ -2185,6 +2060,104 @@ var Ax = (() => {
         console.warn(`${prefix}noise_variance is ${m.noise_variance} (should be positive)`);
       }
     }
+  }
+
+  // src/transforms/relativize.ts
+  function relativize(meanT, semT, meanC, semC, opts = {}) {
+    const {
+      covariance = 0,
+      biasCorrection = true,
+      asPercent = true,
+      controlAsConstant = false
+    } = opts;
+    if (meanT === meanC && semT === semC) {
+      return { mean: 0, sem: 0 };
+    }
+    const absMC = Math.abs(meanC);
+    if (absMC === 0) {
+      throw new Error(
+        "Cannot relativize: control mean is zero. Relative effects are undefined when the baseline is zero."
+      );
+    }
+    let rHat;
+    let sem;
+    if (controlAsConstant) {
+      rHat = (meanT - meanC) / absMC;
+      sem = semT / absMC;
+    } else {
+      rHat = (meanT - meanC) / absMC;
+      if (biasCorrection) {
+        rHat -= meanT * semC * semC / (absMC * absMC * absMC);
+      }
+      const c = meanT / meanC;
+      const varT = semT * semT;
+      const varC = semC * semC;
+      const relVar = (varT - 2 * c * covariance + c * c * varC) / (meanC * meanC);
+      sem = Math.sqrt(Math.max(0, relVar));
+    }
+    if (asPercent) {
+      rHat *= 100;
+      sem *= 100;
+    }
+    return { mean: rHat, sem };
+  }
+  function unrelativize(relMean, relSem, meanC, semC, opts = {}) {
+    const {
+      covariance = 0,
+      biasCorrection = true,
+      asPercent = true,
+      controlAsConstant = false
+    } = opts;
+    let rHat = relMean;
+    let rSem = relSem;
+    if (asPercent) {
+      rHat /= 100;
+      rSem /= 100;
+    }
+    const absMC = Math.abs(meanC);
+    if (absMC === 0) {
+      throw new Error("Cannot unrelativize: control mean is zero.");
+    }
+    let meanT;
+    let semT;
+    if (controlAsConstant) {
+      meanT = rHat * absMC + meanC;
+      semT = rSem * absMC;
+    } else {
+      meanT = rHat * absMC + meanC;
+      if (biasCorrection) {
+        const corrFactor = 1 - semC * semC / (absMC * absMC);
+        if (Math.abs(corrFactor) < 1e-15) {
+          throw new Error(
+            "Cannot unrelativize with bias correction: control SEM \u2248 |control mean|."
+          );
+        }
+        meanT /= corrFactor;
+      }
+      const c = meanT / meanC;
+      const relVar = rSem * rSem;
+      const varC = semC * semC;
+      const varT = relVar * meanC * meanC + 2 * c * covariance - c * c * varC;
+      semT = Math.sqrt(Math.max(0, varT));
+    }
+    return { mean: meanT, sem: semT };
+  }
+  function relativizePredictions(means, variances, sqMean, sqVariance, opts = {}, covariances) {
+    const n = means.length;
+    const relMeans = new Float64Array(n);
+    const relVariances = new Float64Array(n);
+    const sqSem = Math.sqrt(sqVariance);
+    for (let i = 0; i < n; i++) {
+      const sem = Math.sqrt(variances[i]);
+      const cov = covariances ? covariances[i] : 0;
+      const result = relativize(means[i], sem, sqMean, sqSem, {
+        ...opts,
+        covariance: cov
+      });
+      relMeans[i] = result.mean;
+      relVariances[i] = result.sem * result.sem;
+    }
+    return { mean: relMeans, variance: relVariances };
   }
   return __toCommonJS(src_exports);
 })();
@@ -4846,7 +4819,10 @@ var Ax;
     normalizeFixture: () => normalizeFixture,
     plasma: () => plasma,
     pointRelevance: () => pointRelevance,
+    renderCrossValidation: () => renderCrossValidation,
+    renderFeatureImportance: () => renderFeatureImportance,
     renderHeatmap: () => renderHeatmap,
+    renderOptimizationTrace: () => renderOptimizationTrace,
     setupFileUpload: () => setupFileUpload,
     showTooltip: () => showTooltip,
     viridis: () => viridis
@@ -5079,6 +5055,286 @@ var Ax;
       if (!file) return;
       file.text().then((text) => callback(JSON.parse(text)));
     });
+  }
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  function svgEl(tag, attrs) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+    return el;
+  }
+  function renderFeatureImportance(container, predictor, options) {
+    const outcome = options?.outcome ?? predictor.outcomeNames[0];
+    const ranked = predictor.rankDimensionsByImportance(outcome);
+    if (!ranked || ranked.length === 0) {
+      container.textContent = "No lengthscale data";
+      return;
+    }
+    const barColors = ["#7c6ff7", "#6fa0f7", "#6fcff7", "#6ff7c8", "#a0f76f", "#f7e06f", "#f7a06f", "#f76f6f"];
+    const importances = ranked.map((d) => 1 / d.lengthscale);
+    const maxImp = Math.max(...importances);
+    const W = container.clientWidth || 500;
+    const labelW = 130;
+    const barH = 24;
+    const rowGap = 6;
+    const H = ranked.length * (barH + rowGap) + 8;
+    const svg = svgEl("svg", { width: W, height: H });
+    ranked.forEach((dim, i) => {
+      const y = i * (barH + rowGap) + 4;
+      const pct = importances[i] / maxImp;
+      const barW = pct * (W - labelW - 80);
+      svg.appendChild(
+        Object.assign(svgEl("text", {
+          x: labelW - 8,
+          y: y + barH / 2 + 4,
+          fill: "#ccc",
+          "font-size": 13,
+          "text-anchor": "end"
+        }), { textContent: dim.paramName })
+      );
+      svg.appendChild(svgEl("rect", {
+        x: labelW,
+        y,
+        width: W - labelW - 10,
+        height: barH,
+        rx: 4,
+        fill: "#1a1a1d"
+      }));
+      svg.appendChild(svgEl("rect", {
+        x: labelW,
+        y,
+        width: Math.max(2, barW),
+        height: barH,
+        rx: 4,
+        fill: barColors[dim.dimIndex % barColors.length]
+      }));
+      svg.appendChild(
+        Object.assign(svgEl("text", {
+          x: W - 16,
+          y: y + barH / 2 + 4,
+          fill: "#999",
+          "font-size": 11,
+          "text-anchor": "end"
+        }), { textContent: `ls=${dim.lengthscale.toFixed(3)}` })
+      );
+    });
+    container.appendChild(svg);
+  }
+  function renderCrossValidation(container, predictor, options) {
+    const outcome = options?.outcome ?? predictor.outcomeNames[0];
+    const W = options?.width ?? 440;
+    const H = options?.height ?? 440;
+    const loo = predictor.loocv(outcome);
+    if (loo.observed.length === 0) {
+      container.textContent = "No data";
+      return;
+    }
+    const { observed, mean: predicted, variance } = loo;
+    const predStd = variance.map((v) => Math.sqrt(v));
+    const n = observed.length;
+    const meanObs = observed.reduce((a, b) => a + b, 0) / n;
+    const ssTot = observed.reduce((s, v) => s + (v - meanObs) ** 2, 0);
+    const ssRes = observed.reduce((s, v, i) => s + (v - predicted[i]) ** 2, 0);
+    const r2 = 1 - ssRes / ssTot;
+    let lo = Math.min(...observed, ...predicted);
+    let hi = Math.max(...observed, ...predicted);
+    for (let i = 0; i < n; i++) {
+      lo = Math.min(lo, predicted[i] - 2 * predStd[i]);
+      hi = Math.max(hi, predicted[i] + 2 * predStd[i]);
+    }
+    const pad = 0.08 * (hi - lo);
+    lo -= pad;
+    hi += pad;
+    const margin = { top: 30, right: 20, bottom: 40, left: 55 };
+    const pw = W - margin.left - margin.right;
+    const ph = H - margin.top - margin.bottom;
+    const sx = (v) => margin.left + (v - lo) / (hi - lo) * pw;
+    const sy = (v) => margin.top + ph - (v - lo) / (hi - lo) * ph;
+    const svg = svgEl("svg", { width: W, height: H });
+    svg.appendChild(svgEl("line", {
+      x1: sx(lo),
+      y1: sy(lo),
+      x2: sx(hi),
+      y2: sy(hi),
+      stroke: "rgba(255,255,255,0.15)",
+      "stroke-width": 1,
+      "stroke-dasharray": "4,4"
+    }));
+    const nTicks = 5;
+    for (let t = 0; t <= nTicks; t++) {
+      const v = lo + (hi - lo) * t / nTicks;
+      svg.appendChild(svgEl("line", {
+        x1: margin.left,
+        x2: margin.left + pw,
+        y1: sy(v),
+        y2: sy(v),
+        stroke: "rgba(255,255,255,0.04)"
+      }));
+      svg.appendChild(Object.assign(svgEl("text", {
+        x: sx(v),
+        y: margin.top + ph + 16,
+        fill: "#555",
+        "font-size": 10,
+        "text-anchor": "middle"
+      }), { textContent: v.toFixed(2) }));
+      svg.appendChild(Object.assign(svgEl("text", {
+        x: margin.left - 4,
+        y: sy(v) + 3,
+        fill: "#555",
+        "font-size": 10,
+        "text-anchor": "end"
+      }), { textContent: v.toFixed(2) }));
+    }
+    for (let i = 0; i < n; i++) {
+      const cx = sx(observed[i]), cy = sy(predicted[i]);
+      svg.appendChild(svgEl("line", {
+        x1: cx,
+        x2: cx,
+        y1: sy(predicted[i] + 2 * predStd[i]),
+        y2: sy(predicted[i] - 2 * predStd[i]),
+        stroke: "rgba(124,154,255,0.3)",
+        "stroke-width": 1.5
+      }));
+      svg.appendChild(svgEl("circle", {
+        cx,
+        cy,
+        r: 4,
+        fill: "rgba(124,154,255,0.85)",
+        stroke: "rgba(255,255,255,0.5)",
+        "stroke-width": 1
+      }));
+    }
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: margin.left + pw / 2,
+      y: H - 6,
+      fill: "#888",
+      "font-size": 13,
+      "text-anchor": "middle"
+    }), { textContent: "Observed" }));
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: 14,
+      y: margin.top + ph / 2,
+      fill: "#888",
+      "font-size": 13,
+      "text-anchor": "middle",
+      transform: `rotate(-90,14,${margin.top + ph / 2})`
+    }), { textContent: "LOO Predicted" }));
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: margin.left + 6,
+      y: margin.top + 18,
+      fill: "#7c9aff",
+      "font-size": 14,
+      "font-weight": "600"
+    }), { textContent: `R\xB2 = ${r2.toFixed(4)}` }));
+    container.appendChild(svg);
+  }
+  function renderOptimizationTrace(container, predictor, options) {
+    const outcome = options?.outcome ?? predictor.outcomeNames[0];
+    const W = options?.width ?? 440;
+    const H = options?.height ?? 440;
+    const minimize = options?.minimize ?? true;
+    const td = predictor.getTrainingData(outcome);
+    if (td.Y.length === 0) {
+      container.textContent = "No data";
+      return;
+    }
+    const yVals = td.Y;
+    const n = yVals.length;
+    let best = yVals[0];
+    const bestSoFar = yVals.map((y) => {
+      best = minimize ? Math.min(best, y) : Math.max(best, y);
+      return best;
+    });
+    let yMin = Math.min(...yVals);
+    let yMax = Math.max(...yVals);
+    const yPad = 0.08 * (yMax - yMin || 1);
+    yMin -= yPad;
+    yMax += yPad;
+    const margin = { top: 30, right: 20, bottom: 40, left: 55 };
+    const pw = W - margin.left - margin.right;
+    const ph = H - margin.top - margin.bottom;
+    const sx = (i) => margin.left + i / Math.max(1, n - 1) * pw;
+    const sy = (v) => margin.top + ph - (v - yMin) / (yMax - yMin) * ph;
+    const svg = svgEl("svg", { width: W, height: H });
+    const nTicks = 5;
+    for (let t = 0; t <= nTicks; t++) {
+      const v = yMin + (yMax - yMin) * t / nTicks;
+      svg.appendChild(svgEl("line", {
+        x1: margin.left,
+        x2: margin.left + pw,
+        y1: sy(v),
+        y2: sy(v),
+        stroke: "rgba(255,255,255,0.05)"
+      }));
+      svg.appendChild(Object.assign(svgEl("text", {
+        x: margin.left - 8,
+        y: sy(v) + 4,
+        fill: "#555",
+        "font-size": 10,
+        "text-anchor": "end"
+      }), { textContent: v.toFixed(2) }));
+    }
+    let bsfPath = `M ${sx(0)} ${sy(bestSoFar[0])}`;
+    for (let i = 1; i < n; i++) {
+      bsfPath += ` H ${sx(i)} V ${sy(bestSoFar[i])}`;
+    }
+    svg.appendChild(Object.assign(svgEl("path", {
+      d: bsfPath,
+      stroke: "#7c6ff7",
+      "stroke-width": 2.5,
+      fill: "none",
+      opacity: "0.7"
+    })));
+    for (let i = 0; i < n; i++) {
+      const isBest = bestSoFar[i] === yVals[i];
+      svg.appendChild(svgEl("circle", {
+        cx: sx(i),
+        cy: sy(yVals[i]),
+        r: 4,
+        fill: isBest ? "rgba(124,111,247,0.9)" : "rgba(255,255,255,0.3)",
+        stroke: isBest ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.15)",
+        "stroke-width": 1
+      }));
+    }
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: margin.left + pw / 2,
+      y: H - 6,
+      fill: "#888",
+      "font-size": 13,
+      "text-anchor": "middle"
+    }), { textContent: "Trial" }));
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: 14,
+      y: margin.top + ph / 2,
+      fill: "#888",
+      "font-size": 13,
+      "text-anchor": "middle",
+      transform: `rotate(-90,14,${margin.top + ph / 2})`
+    }), { textContent: `${outcome}${minimize ? " (min)" : " (max)"}` }));
+    const xStep = Math.max(1, Math.ceil(n / 10));
+    for (let i = 0; i < n; i += xStep) {
+      svg.appendChild(Object.assign(svgEl("text", {
+        x: sx(i),
+        y: margin.top + ph + 18,
+        fill: "#555",
+        "font-size": 10,
+        "text-anchor": "middle"
+      }), { textContent: String(i) }));
+    }
+    svg.appendChild(svgEl("line", {
+      x1: margin.left + pw - 120,
+      x2: margin.left + pw - 100,
+      y1: margin.top + 12,
+      y2: margin.top + 12,
+      stroke: "#7c6ff7",
+      "stroke-width": 2.5
+    }));
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: margin.left + pw - 96,
+      y: margin.top + 16,
+      fill: "#888",
+      "font-size": 11
+    }), { textContent: "best so far" }));
+    container.appendChild(svg);
   }
   function renderHeatmap(ctx, values, gridW, gridH, canvasW, canvasH, colorFn, minVal, maxVal) {
     const img = ctx.createImageData(canvasW, canvasH);

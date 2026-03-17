@@ -442,6 +442,317 @@ export function setupFileUpload(
  * @param minVal - Value that maps to t=0.
  * @param maxVal - Value that maps to t=1.
  */
+// ── Embeddable render functions ───────────────────────────────────────────
+
+/** Structural type for the predictor methods used by render functions. */
+export interface RenderPredictor {
+  readonly outcomeNames: string[];
+  readonly paramNames: string[];
+  getTrainingData(outcomeName?: string): { X: number[][]; Y: number[]; paramNames: string[] };
+  loocv(outcomeName?: string): { observed: number[]; mean: number[]; variance: number[] };
+  rankDimensionsByImportance(outcomeName?: string): { dimIndex: number; paramName: string; lengthscale: number }[];
+}
+
+/** Options for renderFeatureImportance. */
+export interface FeatureImportanceOptions {
+  outcome?: string;
+}
+
+/** Options for renderCrossValidation. */
+export interface CrossValidationOptions {
+  outcome?: string;
+  width?: number;
+  height?: number;
+}
+
+/** Options for renderOptimizationTrace. */
+export interface OptimizationTraceOptions {
+  outcome?: string;
+  minimize?: boolean;
+  width?: number;
+  height?: number;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string | number>,
+): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(SVG_NS, tag) as SVGElementTagNameMap[K];
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  return el;
+}
+
+/**
+ * Render a horizontal bar chart of feature importance into a container.
+ *
+ * Each bar shows `1 / lengthscale` (normalized to the most important
+ * dimension). Longer bars = more sensitive. Sorted by importance.
+ */
+export function renderFeatureImportance(
+  container: HTMLElement,
+  predictor: RenderPredictor,
+  options?: FeatureImportanceOptions,
+): void {
+  const outcome = options?.outcome ?? predictor.outcomeNames[0];
+  const ranked = predictor.rankDimensionsByImportance(outcome);
+  if (!ranked || ranked.length === 0) {
+    container.textContent = "No lengthscale data";
+    return;
+  }
+
+  const barColors = ["#7c6ff7", "#6fa0f7", "#6fcff7", "#6ff7c8", "#a0f76f", "#f7e06f", "#f7a06f", "#f76f6f"];
+  const importances = ranked.map((d) => 1 / d.lengthscale);
+  const maxImp = Math.max(...importances);
+
+  const W = container.clientWidth || 500;
+  const labelW = 130;
+  const barH = 24;
+  const rowGap = 6;
+  const H = ranked.length * (barH + rowGap) + 8;
+
+  const svg = svgEl("svg", { width: W, height: H });
+
+  ranked.forEach((dim, i) => {
+    const y = i * (barH + rowGap) + 4;
+    const pct = importances[i] / maxImp;
+    const barW = pct * (W - labelW - 80);
+
+    // Label
+    svg.appendChild(
+      Object.assign(svgEl("text", {
+        x: labelW - 8, y: y + barH / 2 + 4,
+        fill: "#ccc", "font-size": 13, "text-anchor": "end",
+      }), { textContent: dim.paramName }),
+    );
+
+    // Track
+    svg.appendChild(svgEl("rect", {
+      x: labelW, y, width: W - labelW - 10, height: barH,
+      rx: 4, fill: "#1a1a1d",
+    }));
+
+    // Fill bar
+    svg.appendChild(svgEl("rect", {
+      x: labelW, y, width: Math.max(2, barW), height: barH,
+      rx: 4, fill: barColors[dim.dimIndex % barColors.length],
+    }));
+
+    // Value annotation
+    svg.appendChild(
+      Object.assign(svgEl("text", {
+        x: W - 16, y: y + barH / 2 + 4,
+        fill: "#999", "font-size": 11, "text-anchor": "end",
+      }), { textContent: `ls=${dim.lengthscale.toFixed(3)}` }),
+    );
+  });
+
+  container.appendChild(svg);
+}
+
+/**
+ * Render a leave-one-out cross-validation scatter plot into a container.
+ *
+ * Shows observed vs LOO-predicted values with 2-sigma CI whiskers,
+ * a diagonal reference line, and R-squared annotation.
+ */
+export function renderCrossValidation(
+  container: HTMLElement,
+  predictor: RenderPredictor,
+  options?: CrossValidationOptions,
+): void {
+  const outcome = options?.outcome ?? predictor.outcomeNames[0];
+  const W = options?.width ?? 440;
+  const H = options?.height ?? 440;
+  const loo = predictor.loocv(outcome);
+  if (loo.observed.length === 0) { container.textContent = "No data"; return; }
+
+  const { observed, mean: predicted, variance } = loo;
+  const predStd = variance.map((v) => Math.sqrt(v));
+  const n = observed.length;
+
+  // R-squared
+  const meanObs = observed.reduce((a, b) => a + b, 0) / n;
+  const ssTot = observed.reduce((s, v) => s + (v - meanObs) ** 2, 0);
+  const ssRes = observed.reduce((s, v, i) => s + (v - predicted[i]) ** 2, 0);
+  const r2 = 1 - ssRes / ssTot;
+
+  // Axis range
+  let lo = Math.min(...observed, ...predicted);
+  let hi = Math.max(...observed, ...predicted);
+  for (let i = 0; i < n; i++) {
+    lo = Math.min(lo, predicted[i] - 2 * predStd[i]);
+    hi = Math.max(hi, predicted[i] + 2 * predStd[i]);
+  }
+  const pad = 0.08 * (hi - lo); lo -= pad; hi += pad;
+
+  const margin = { top: 30, right: 20, bottom: 40, left: 55 };
+  const pw = W - margin.left - margin.right;
+  const ph = H - margin.top - margin.bottom;
+  const sx = (v: number) => margin.left + ((v - lo) / (hi - lo)) * pw;
+  const sy = (v: number) => margin.top + ph - ((v - lo) / (hi - lo)) * ph;
+
+  const svg = svgEl("svg", { width: W, height: H });
+
+  // Diagonal reference
+  svg.appendChild(svgEl("line", {
+    x1: sx(lo), y1: sy(lo), x2: sx(hi), y2: sy(hi),
+    stroke: "rgba(255,255,255,0.15)", "stroke-width": 1, "stroke-dasharray": "4,4",
+  }));
+
+  // Grid + ticks
+  const nTicks = 5;
+  for (let t = 0; t <= nTicks; t++) {
+    const v = lo + ((hi - lo) * t) / nTicks;
+    svg.appendChild(svgEl("line", {
+      x1: margin.left, x2: margin.left + pw, y1: sy(v), y2: sy(v),
+      stroke: "rgba(255,255,255,0.04)",
+    }));
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: sx(v), y: margin.top + ph + 16, fill: "#555", "font-size": 10, "text-anchor": "middle",
+    }), { textContent: v.toFixed(2) }));
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: margin.left - 4, y: sy(v) + 3, fill: "#555", "font-size": 10, "text-anchor": "end",
+    }), { textContent: v.toFixed(2) }));
+  }
+
+  // CI whiskers + dots
+  for (let i = 0; i < n; i++) {
+    const cx = sx(observed[i]), cy = sy(predicted[i]);
+    svg.appendChild(svgEl("line", {
+      x1: cx, x2: cx,
+      y1: sy(predicted[i] + 2 * predStd[i]),
+      y2: sy(predicted[i] - 2 * predStd[i]),
+      stroke: "rgba(124,154,255,0.3)", "stroke-width": 1.5,
+    }));
+    svg.appendChild(svgEl("circle", {
+      cx, cy, r: 4, fill: "rgba(124,154,255,0.85)",
+      stroke: "rgba(255,255,255,0.5)", "stroke-width": 1,
+    }));
+  }
+
+  // Axis labels
+  svg.appendChild(Object.assign(svgEl("text", {
+    x: margin.left + pw / 2, y: H - 6, fill: "#888", "font-size": 13, "text-anchor": "middle",
+  }), { textContent: "Observed" }));
+  svg.appendChild(Object.assign(svgEl("text", {
+    x: 14, y: margin.top + ph / 2, fill: "#888", "font-size": 13, "text-anchor": "middle",
+    transform: `rotate(-90,14,${margin.top + ph / 2})`,
+  }), { textContent: "LOO Predicted" }));
+
+  // R-squared
+  svg.appendChild(Object.assign(svgEl("text", {
+    x: margin.left + 6, y: margin.top + 18, fill: "#7c9aff", "font-size": 14, "font-weight": "600",
+  }), { textContent: `R\u00B2 = ${r2.toFixed(4)}` }));
+
+  container.appendChild(svg);
+}
+
+/**
+ * Render an optimization trace plot into a container.
+ *
+ * Shows per-trial outcome values as dots with a best-so-far step line.
+ * Purple dots indicate trials that set a new best; gray dots are others.
+ */
+export function renderOptimizationTrace(
+  container: HTMLElement,
+  predictor: RenderPredictor,
+  options?: OptimizationTraceOptions,
+): void {
+  const outcome = options?.outcome ?? predictor.outcomeNames[0];
+  const W = options?.width ?? 440;
+  const H = options?.height ?? 440;
+  const minimize = options?.minimize ?? true;
+  const td = predictor.getTrainingData(outcome);
+  if (td.Y.length === 0) { container.textContent = "No data"; return; }
+
+  const yVals = td.Y;
+  const n = yVals.length;
+
+  // Running best
+  let best = yVals[0];
+  const bestSoFar = yVals.map((y) => {
+    best = minimize ? Math.min(best, y) : Math.max(best, y);
+    return best;
+  });
+
+  let yMin = Math.min(...yVals);
+  let yMax = Math.max(...yVals);
+  const yPad = 0.08 * (yMax - yMin || 1);
+  yMin -= yPad; yMax += yPad;
+
+  const margin = { top: 30, right: 20, bottom: 40, left: 55 };
+  const pw = W - margin.left - margin.right;
+  const ph = H - margin.top - margin.bottom;
+  const sx = (i: number) => margin.left + (i / Math.max(1, n - 1)) * pw;
+  const sy = (v: number) => margin.top + ph - ((v - yMin) / (yMax - yMin)) * ph;
+
+  const svg = svgEl("svg", { width: W, height: H });
+
+  // Grid + Y ticks
+  const nTicks = 5;
+  for (let t = 0; t <= nTicks; t++) {
+    const v = yMin + ((yMax - yMin) * t) / nTicks;
+    svg.appendChild(svgEl("line", {
+      x1: margin.left, x2: margin.left + pw, y1: sy(v), y2: sy(v),
+      stroke: "rgba(255,255,255,0.05)",
+    }));
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: margin.left - 8, y: sy(v) + 4, fill: "#555", "font-size": 10, "text-anchor": "end",
+    }), { textContent: v.toFixed(2) }));
+  }
+
+  // Best-so-far step line
+  let bsfPath = `M ${sx(0)} ${sy(bestSoFar[0])}`;
+  for (let i = 1; i < n; i++) {
+    bsfPath += ` H ${sx(i)} V ${sy(bestSoFar[i])}`;
+  }
+  svg.appendChild(Object.assign(svgEl("path", {
+    d: bsfPath, stroke: "#7c6ff7", "stroke-width": 2.5, fill: "none", opacity: "0.7",
+  })));
+
+  // Dots
+  for (let i = 0; i < n; i++) {
+    const isBest = bestSoFar[i] === yVals[i];
+    svg.appendChild(svgEl("circle", {
+      cx: sx(i), cy: sy(yVals[i]), r: 4,
+      fill: isBest ? "rgba(124,111,247,0.9)" : "rgba(255,255,255,0.3)",
+      stroke: isBest ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.15)",
+      "stroke-width": 1,
+    }));
+  }
+
+  // Axis labels
+  svg.appendChild(Object.assign(svgEl("text", {
+    x: margin.left + pw / 2, y: H - 6, fill: "#888", "font-size": 13, "text-anchor": "middle",
+  }), { textContent: "Trial" }));
+  svg.appendChild(Object.assign(svgEl("text", {
+    x: 14, y: margin.top + ph / 2, fill: "#888", "font-size": 13, "text-anchor": "middle",
+    transform: `rotate(-90,14,${margin.top + ph / 2})`,
+  }), { textContent: `${outcome}${minimize ? " (min)" : " (max)"}` }));
+
+  // X ticks
+  const xStep = Math.max(1, Math.ceil(n / 10));
+  for (let i = 0; i < n; i += xStep) {
+    svg.appendChild(Object.assign(svgEl("text", {
+      x: sx(i), y: margin.top + ph + 18, fill: "#555", "font-size": 10, "text-anchor": "middle",
+    }), { textContent: String(i) }));
+  }
+
+  // Legend
+  svg.appendChild(svgEl("line", {
+    x1: margin.left + pw - 120, x2: margin.left + pw - 100,
+    y1: margin.top + 12, y2: margin.top + 12,
+    stroke: "#7c6ff7", "stroke-width": 2.5,
+  }));
+  svg.appendChild(Object.assign(svgEl("text", {
+    x: margin.left + pw - 96, y: margin.top + 16, fill: "#888", "font-size": 11,
+  }), { textContent: "best so far" }));
+
+  container.appendChild(svg);
+}
+
 export function renderHeatmap(
   ctx: CanvasRenderingContext2D,
   values: number[],
