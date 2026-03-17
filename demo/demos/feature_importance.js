@@ -53,21 +53,27 @@ ${vizScript()}
 <script>
 var Predictor = Ax.Predictor;
 var predictor, fixture, selectedOutcome;
-var outcomeSelect = document.getElementById('outcomeSelect');
 var viewMode = document.getElementById('viewMode');
+var outcomeSelect = document.getElementById('outcomeSelect');
 
 var barColors = ['#7c6ff7','#6fa0f7','#6fcff7','#6ff7c8','#a0f76f','#f7e06f','#f7a06f','#f76f6f'];
+
+// File upload — wired via shared utility instead of manual addEventListener
+Ax.viz.setupFileUpload('fileInput', function(data) { loadFixtureData(data); });
+
+// Outcome selector change — single listener wired once
+outcomeSelect.addEventListener('change', function() { selectedOutcome = outcomeSelect.value; render(); });
 
 function loadFixtureData(data) {
   fixture = Ax.viz.normalizeFixture(data);
   predictor = new Predictor(fixture);
-  outcomeSelect.innerHTML = '';
-  predictor.outcomeNames.forEach(function(name) {
-    var opt = document.createElement('option');
-    opt.value = name; opt.textContent = name;
-    outcomeSelect.appendChild(opt);
+
+  // Populate outcome dropdown via shared utility (clears + fills options)
+  Ax.viz.createOutcomeSelector(predictor, outcomeSelect, function(name) {
+    selectedOutcome = name; render();
   });
   selectedOutcome = predictor.outcomeNames[0];
+
   document.getElementById('subtitle').textContent =
     (fixture.metadata.name || 'Fixture') + ' — ' + predictor.paramNames.length + ' parameters, ' +
     predictor.outcomeNames.length + ' outcome' + (predictor.outcomeNames.length > 1 ? 's' : '');
@@ -126,12 +132,7 @@ function render() {
   }
 }
 
-outcomeSelect.addEventListener('change', function() { selectedOutcome = outcomeSelect.value; render(); });
 viewMode.addEventListener('change', render);
-document.getElementById('fileInput').addEventListener('change', function(e) {
-  var file = e.target.files[0]; if (!file) return;
-  file.text().then(function(text) { loadFixtureData(JSON.parse(text)); });
-});
 
 loadFixtureData(__DEFAULT_FIXTURE__);
 </script>

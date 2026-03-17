@@ -2291,6 +2291,8 @@ var Ax;
   var viz_exports = {};
   __export(viz_exports, {
     computeDimOrder: () => computeDimOrder,
+    createOutcomeSelector: () => createOutcomeSelector,
+    createParamSliders: () => createParamSliders,
     defaultParamValue: () => defaultParamValue,
     drawColorbar: () => drawColorbar,
     drawDataDot: () => drawDataDot,
@@ -2301,6 +2303,8 @@ var Ax;
     normalizeFixture: () => normalizeFixture,
     plasma: () => plasma,
     pointRelevance: () => pointRelevance,
+    renderHeatmap: () => renderHeatmap,
+    setupFileUpload: () => setupFileUpload,
     showTooltip: () => showTooltip,
     viridis: () => viridis
   });
@@ -2456,6 +2460,108 @@ var Ax;
   }
   function hideTooltip(el) {
     el.style.display = "none";
+  }
+  function createOutcomeSelector(predictor, selectEl, onChange) {
+    selectEl.innerHTML = "";
+    predictor.outcomeNames.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      selectEl.appendChild(opt);
+    });
+    selectEl.addEventListener("change", () => onChange(selectEl.value));
+  }
+  function createParamSliders(predictor, params, container, currentValues, onChange, options) {
+    container.innerHTML = "";
+    const excludeDims = options?.excludeDims ?? /* @__PURE__ */ new Set();
+    const order = options?.dimOrder ?? Array.from({ length: predictor.paramNames.length }, (_, i) => i);
+    order.forEach((i) => {
+      if (excludeDims.has(i)) return;
+      const name = predictor.paramNames[i];
+      const p = params[i];
+      const row = document.createElement("div");
+      row.className = "slrow";
+      const lbl = document.createElement("span");
+      lbl.className = "sllbl";
+      lbl.textContent = name;
+      const val = document.createElement("span");
+      val.className = "slval";
+      val.textContent = formatParamValue(currentValues[i], p);
+      if (isChoice(p)) {
+        const sel = document.createElement("select");
+        sel.className = "slselect";
+        p.values.forEach((v) => {
+          const o = document.createElement("option");
+          o.value = String(v);
+          o.textContent = String(v);
+          if (v == currentValues[i]) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener("change", () => {
+          const nv = +sel.value;
+          currentValues[i] = nv;
+          val.textContent = formatParamValue(nv, p);
+          onChange(i, nv);
+        });
+        row.appendChild(lbl);
+        row.appendChild(sel);
+        row.appendChild(val);
+      } else {
+        const lo = predictor.paramBounds[i][0];
+        const hi = predictor.paramBounds[i][1];
+        const sl = document.createElement("input");
+        sl.type = "range";
+        sl.min = String(lo);
+        sl.max = String(hi);
+        sl.step = isInteger(p) ? "1" : String((hi - lo) / 200);
+        sl.value = String(currentValues[i]);
+        sl.addEventListener("input", () => {
+          const nv = isInteger(p) ? Math.round(+sl.value) : +sl.value;
+          currentValues[i] = nv;
+          val.textContent = formatParamValue(nv, p);
+          onChange(i, nv);
+        });
+        row.appendChild(lbl);
+        row.appendChild(sl);
+        row.appendChild(val);
+      }
+      container.appendChild(row);
+    });
+  }
+  function setupFileUpload(inputId, callback) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      file.text().then((text) => callback(JSON.parse(text)));
+    });
+  }
+  function renderHeatmap(ctx, values, gridW, gridH, canvasW, canvasH, colorFn, minVal, maxVal) {
+    const img = ctx.createImageData(canvasW, canvasH);
+    const range = maxVal - minVal || 1;
+    const cellW = canvasW / gridW;
+    const cellH = canvasH / gridH;
+    for (let k = 0; k < values.length; k++) {
+      const gi = k % gridW;
+      const gj = Math.floor(k / gridW);
+      const t = Math.max(0, Math.min(1, (values[k] - minVal) / range));
+      const rgb = colorFn(t);
+      const x0 = Math.round(gi * cellW);
+      const y0 = Math.round(gj * cellH);
+      const x1 = Math.round((gi + 1) * cellW);
+      const y1 = Math.round((gj + 1) * cellH);
+      for (let py = y0; py < y1; py++) {
+        for (let px = x0; px < x1; px++) {
+          const idx = (py * canvasW + px) * 4;
+          img.data[idx] = rgb[0];
+          img.data[idx + 1] = rgb[1];
+          img.data[idx + 2] = rgb[2];
+          img.data[idx + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
   }
   return __toCommonJS(viz_exports);
 })();

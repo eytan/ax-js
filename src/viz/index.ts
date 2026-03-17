@@ -279,3 +279,198 @@ export function showTooltip(
 export function hideTooltip(el: HTMLElement): void {
   el.style.display = "none";
 }
+
+// ── Higher-level embedding helpers ────────────────────────────────────────
+
+/** Minimal predictor shape accepted by embedding helpers. */
+interface EmbeddingPredictor {
+  readonly outcomeNames: string[];
+  readonly paramNames: string[];
+  readonly paramBounds: [number, number][];
+}
+
+/**
+ * Populate a `<select>` element with the predictor's outcome names.
+ *
+ * Clears existing options, adds one `<option>` per outcome, selects the
+ * first, and calls `onChange(selectedName)` whenever the selection changes.
+ *
+ * @param predictor - Provides `outcomeNames`.
+ * @param selectEl - The `<select>` element to populate.
+ * @param onChange - Called with the newly selected outcome name.
+ */
+export function createOutcomeSelector(
+  predictor: EmbeddingPredictor,
+  selectEl: HTMLSelectElement,
+  onChange: (name: string) => void,
+): void {
+  selectEl.innerHTML = "";
+  predictor.outcomeNames.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    selectEl.appendChild(opt);
+  });
+  selectEl.addEventListener("change", () => onChange(selectEl.value));
+}
+
+/**
+ * Build parameter sliders for non-plotted dimensions inside `container`.
+ *
+ * For each dimension not in `excludeDims`, creates a range slider (or
+ * dropdown for choice parameters). Calls `onChange(dimIndex, newValue)`
+ * whenever a slider value changes.
+ *
+ * @param predictor - Provides paramNames, paramBounds.
+ * @param params - Full parameter specs from `search_space.parameters`.
+ * @param container - DOM element to append slider rows into.
+ * @param currentValues - Current value for each dimension (mutated in place).
+ * @param onChange - Called with `(dimIndex, newValue)` on slider input.
+ * @param options - Optional `excludeDims` (Set of dim indices to skip)
+ *   and `dimOrder` (array of dim indices controlling display order).
+ */
+export function createParamSliders(
+  predictor: EmbeddingPredictor,
+  params: ParamSpec[],
+  container: HTMLElement,
+  currentValues: (number | string | boolean)[],
+  onChange: (dimIndex: number, value: number | string | boolean) => void,
+  options?: { excludeDims?: Set<number>; dimOrder?: number[] },
+): void {
+  container.innerHTML = "";
+  const excludeDims = options?.excludeDims ?? new Set<number>();
+  const order =
+    options?.dimOrder ??
+    Array.from({ length: predictor.paramNames.length }, (_, i) => i);
+
+  order.forEach((i) => {
+    if (excludeDims.has(i)) return;
+    const name = predictor.paramNames[i];
+    const p = params[i];
+    const row = document.createElement("div");
+    row.className = "slrow";
+    const lbl = document.createElement("span");
+    lbl.className = "sllbl";
+    lbl.textContent = name;
+
+    const val = document.createElement("span");
+    val.className = "slval";
+    val.textContent = formatParamValue(currentValues[i] as number, p);
+
+    if (isChoice(p)) {
+      const sel = document.createElement("select");
+      sel.className = "slselect";
+      p.values!.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = String(v);
+        o.textContent = String(v);
+        if (v == currentValues[i]) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener("change", () => {
+        const nv = +sel.value;
+        currentValues[i] = nv;
+        val.textContent = formatParamValue(nv, p);
+        onChange(i, nv);
+      });
+      row.appendChild(lbl);
+      row.appendChild(sel);
+      row.appendChild(val);
+    } else {
+      const lo = predictor.paramBounds[i][0];
+      const hi = predictor.paramBounds[i][1];
+      const sl = document.createElement("input");
+      sl.type = "range";
+      sl.min = String(lo);
+      sl.max = String(hi);
+      sl.step = isInteger(p) ? "1" : String((hi - lo) / 200);
+      sl.value = String(currentValues[i]);
+      sl.addEventListener("input", () => {
+        const nv = isInteger(p) ? Math.round(+sl.value) : +sl.value;
+        currentValues[i] = nv;
+        val.textContent = formatParamValue(nv, p);
+        onChange(i, nv);
+      });
+      row.appendChild(lbl);
+      row.appendChild(sl);
+      row.appendChild(val);
+    }
+    container.appendChild(row);
+  });
+}
+
+/**
+ * Wire up a `<input type="file">` element to parse JSON and invoke a callback.
+ *
+ * @param inputId - DOM id of the file input element.
+ * @param callback - Called with the parsed JSON object.
+ */
+export function setupFileUpload(
+  inputId: string,
+  callback: (data: unknown) => void,
+): void {
+  const input = document.getElementById(inputId) as HTMLInputElement | null;
+  if (!input) return;
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    file.text().then((text) => callback(JSON.parse(text)));
+  });
+}
+
+/**
+ * Render a 2D heatmap onto a canvas context from a flat array of values.
+ *
+ * The values array has length `gridW * gridH`, laid out in row-major order
+ * (row 0 first). Each value is mapped through `colorFn` after normalizing
+ * to [0, 1] via `(val - minVal) / (maxVal - minVal)`.
+ *
+ * The output fills the full `canvasW x canvasH` pixel region, stretching
+ * grid cells evenly.
+ *
+ * @param ctx - Canvas 2D rendering context.
+ * @param values - Flat row-major array of length `gridW * gridH`.
+ * @param gridW - Number of grid columns.
+ * @param gridH - Number of grid rows.
+ * @param canvasW - Output pixel width.
+ * @param canvasH - Output pixel height.
+ * @param colorFn - Maps a normalized [0,1] value to an RGB triplet.
+ * @param minVal - Value that maps to t=0.
+ * @param maxVal - Value that maps to t=1.
+ */
+export function renderHeatmap(
+  ctx: CanvasRenderingContext2D,
+  values: number[],
+  gridW: number,
+  gridH: number,
+  canvasW: number,
+  canvasH: number,
+  colorFn: (t: number) => RGB,
+  minVal: number,
+  maxVal: number,
+): void {
+  const img = ctx.createImageData(canvasW, canvasH);
+  const range = maxVal - minVal || 1;
+  const cellW = canvasW / gridW;
+  const cellH = canvasH / gridH;
+  for (let k = 0; k < values.length; k++) {
+    const gi = k % gridW;
+    const gj = Math.floor(k / gridW);
+    const t = Math.max(0, Math.min(1, (values[k] - minVal) / range));
+    const rgb = colorFn(t);
+    const x0 = Math.round(gi * cellW);
+    const y0 = Math.round(gj * cellH);
+    const x1 = Math.round((gi + 1) * cellW);
+    const y1 = Math.round((gj + 1) * cellH);
+    for (let py = y0; py < y1; py++) {
+      for (let px = x0; px < x1; px++) {
+        const idx = (py * canvasW + px) * 4;
+        img.data[idx] = rgb[0];
+        img.data[idx + 1] = rgb[1];
+        img.data[idx + 2] = rgb[2];
+        img.data[idx + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
