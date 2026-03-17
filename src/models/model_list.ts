@@ -18,6 +18,11 @@ export class ModelListGP {
     return this.models[index].predict(testPoints);
   }
 
+  /** Analytic LOO-CV predictions per outcome. */
+  loocvPredictions(): PredictionResult[] {
+    return this.models.map((m) => m.loocvPredictions());
+  }
+
   /**
    * Posterior covariance with a reference point, per output.
    * Each sub-model is independent, so no cross-output covariance.

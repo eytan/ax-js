@@ -95,6 +95,17 @@ for multi-task GPs and transfer learning scenarios.
 2. Model outcome untransform: Standardize⁻¹, Log⁻¹(=exp), etc.
 3. Adapter untransform: exp() for LogY, inverse-bilog for BilogY, etc.
 
+### CRITICAL: `train_Y` is NOT in original space
+
+`model_state.train_Y` has been transformed by **both** layers (adapter + model).
+To get original-space Y values, you must undo both transforms in reverse order.
+`Predictor.untransformTrainY()` (private) handles this correctly.
+
+**RULE: Any Predictor method that returns Y-space values MUST call `untransformTrainY()` —
+never read `train_Y` directly.** This is the same two-layer untransform that `predict()`
+applies to posterior means. Using raw `train_Y` produces values in standardized/log/etc.
+space, which silently gives wrong results (e.g., all observed values near 0).
+
 ### MultiTaskGP Transform Gotchas
 
 - Input transforms apply to DATA columns only (task column excluded)

@@ -171,4 +171,138 @@ describe("Predictor", () => {
       expect(preds["acceleration"].mean[0]).toBeCloseTo(rawPreds["acceleration"].mean[0], 10);
     });
   });
+
+  describe("convenience methods", () => {
+    describe("getTrainingData", () => {
+      it("returns training data for single-output model", () => {
+        const fixture = loadFixture("branin_matern25.json");
+        const predictor = new Predictor(fixture.experiment);
+        const td = predictor.getTrainingData();
+        expect(td.X.length).toBeGreaterThan(0);
+        expect(td.Y.length).toBe(td.X.length);
+        expect(td.paramNames).toEqual(predictor.paramNames);
+        // X should be a copy, not a reference
+        td.X[0][0] = -999;
+        const td2 = predictor.getTrainingData();
+        expect(td2.X[0][0]).not.toBe(-999);
+      });
+
+      it("returns per-outcome data for ModelListGP", () => {
+        const fixture = loadFixture("vsip_modellist.json");
+        const predictor = new Predictor(fixture.experiment);
+        const td0 = predictor.getTrainingData(predictor.outcomeNames[0]);
+        const td1 = predictor.getTrainingData(predictor.outcomeNames[1]);
+        expect(td0.X.length).toBeGreaterThan(0);
+        expect(td1.X.length).toBeGreaterThan(0);
+      });
+
+      it("un-standardizes Y when outcome_transform has mean/std", () => {
+        const fixture = loadFixture("branin_matern25.json");
+        const ms = fixture.experiment.model_state;
+        if (ms.outcome_transform && ms.outcome_transform.mean !== undefined) {
+          const predictor = new Predictor(fixture.experiment);
+          const td = predictor.getTrainingData();
+          // Y should be un-standardized: y_raw = mean + std * y_internal
+          const rawY0 = ms.outcome_transform.mean + ms.outcome_transform.std * ms.train_Y[0];
+          expect(td.Y[0]).toBeCloseTo(rawY0, 10);
+        }
+      });
+    });
+
+    describe("getLengthscales", () => {
+      it("returns lengthscales for single-output model", () => {
+        const fixture = loadFixture("branin_matern25.json");
+        const predictor = new Predictor(fixture.experiment);
+        const ls = predictor.getLengthscales();
+        expect(ls).not.toBeNull();
+        expect(ls!.length).toBe(2); // branin has 2 dims
+        for (const l of ls!) {
+          expect(l).toBeGreaterThan(0);
+        }
+      });
+
+      it("returns lengthscales for a specific outcome in ModelListGP", () => {
+        const fixture = loadFixture("vsip_modellist.json");
+        const predictor = new Predictor(fixture.experiment);
+        const ls = predictor.getLengthscales(predictor.outcomeNames[0]);
+        expect(ls).not.toBeNull();
+        expect(ls!.length).toBeGreaterThan(0);
+      });
+    });
+
+    describe("rankDimensionsByImportance", () => {
+      it("returns dimensions sorted by lengthscale (shortest first)", () => {
+        const fixture = loadFixture("branin_matern25.json");
+        const predictor = new Predictor(fixture.experiment);
+        const ranked = predictor.rankDimensionsByImportance();
+        expect(ranked.length).toBe(2);
+        // Should be sorted: shortest lengthscale first
+        expect(ranked[0].lengthscale).toBeLessThanOrEqual(ranked[1].lengthscale);
+        // Should have correct param names
+        expect(predictor.paramNames).toContain(ranked[0].paramName);
+      });
+    });
+
+    describe("kernelCorrelation", () => {
+      it("returns 1 for identical points", () => {
+        const fixture = loadFixture("branin_matern25.json");
+        const predictor = new Predictor(fixture.experiment);
+        const pt = fixture.experiment.model_state.train_X[0];
+        expect(predictor.kernelCorrelation(pt, pt)).toBeCloseTo(1.0, 10);
+      });
+
+      it("returns value in (0, 1) for different points", () => {
+        const fixture = loadFixture("branin_matern25.json");
+        const predictor = new Predictor(fixture.experiment);
+        const pt1 = fixture.experiment.model_state.train_X[0];
+        const pt2 = fixture.experiment.model_state.train_X[1];
+        const corr = predictor.kernelCorrelation(pt1, pt2);
+        expect(corr).toBeGreaterThan(0);
+        expect(corr).toBeLessThan(1);
+      });
+    });
+
+    describe("loocv", () => {
+      it("returns LOO predictions that differ from observed (not interpolating)", () => {
+        const fixture = loadFixture("branin_matern25.json");
+        const predictor = new Predictor(fixture.experiment);
+        const loo = predictor.loocv();
+        expect(loo.observed.length).toBeGreaterThan(0);
+        expect(loo.mean.length).toBe(loo.observed.length);
+        expect(loo.variance.length).toBe(loo.observed.length);
+        // LOO predictions should NOT be identical to observed (GP interpolates, LOO doesn't)
+        let allSame = true;
+        for (let i = 0; i < loo.observed.length; i++) {
+          if (Math.abs(loo.mean[i] - loo.observed[i]) > 1e-4) allSame = false;
+          expect(loo.variance[i]).toBeGreaterThan(0);
+        }
+        expect(allSame).toBe(false);
+      });
+
+      it("works for ModelListGP with specific outcome", () => {
+        const fixture = loadFixture("vsip_modellist.json");
+        const predictor = new Predictor(fixture.experiment);
+        const loo = predictor.loocv("weight");
+        expect(loo.observed.length).toBeGreaterThan(0);
+        expect(loo.mean.length).toBe(loo.observed.length);
+        // LOO variance should be positive
+        for (let i = 0; i < loo.variance.length; i++) {
+          expect(loo.variance[i]).toBeGreaterThan(0);
+        }
+      });
+
+      it("LOO R² is reasonable for a well-fit model", () => {
+        const fixture = loadFixture("penicillin_modellist.json");
+        const predictor = new Predictor(fixture.experiment);
+        const loo = predictor.loocv(predictor.outcomeNames[0]);
+        const yBar = loo.observed.reduce((a, b) => a + b, 0) / loo.observed.length;
+        const ssTot = loo.observed.reduce((a, y) => a + (y - yBar) ** 2, 0);
+        const ssRes = loo.observed.reduce((a, y, i) => a + (y - loo.mean[i]) ** 2, 0);
+        const r2 = 1 - ssRes / ssTot;
+        // LOO R² should be positive (model explains more than the mean)
+        expect(r2).toBeGreaterThan(0);
+      });
+    });
+
+  });
 });

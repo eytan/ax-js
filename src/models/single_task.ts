@@ -10,6 +10,7 @@ import { buildKernel } from "../kernels/build.js";
 export class SingleTaskGP {
   private gp: ExactGP;
   private trainDim: number;
+  private trainY: Matrix;
 
   constructor(state: GPModelState) {
     if (state.train_X.length === 0) {
@@ -17,7 +18,7 @@ export class SingleTaskGP {
     }
     const trainX = Matrix.from2D(state.train_X);
     this.trainDim = trainX.cols;
-    const trainY = Matrix.vector(state.train_Y);
+    this.trainY = Matrix.vector(state.train_Y);
     const kernel = buildKernel(state.kernel);
     const mean = new ConstantMean(state.mean_constant);
 
@@ -46,7 +47,7 @@ export class SingleTaskGP {
 
     this.gp = new ExactGP(
       trainX,
-      trainY,
+      this.trainY,
       kernel,
       mean,
       noiseVariance,
@@ -67,6 +68,14 @@ export class SingleTaskGP {
     }
     const testX = Matrix.from2D(testPoints);
     return this.gp.predict(testX);
+  }
+
+  /**
+   * Analytic LOO-CV predictions (Rasmussen & Williams, Eq. 5.12).
+   * Returns predictions in the same space as predict() (after outcome untransform).
+   */
+  loocvPredictions(): PredictionResult {
+    return this.gp.loocvPredictions(this.trainY);
   }
 
   /**
