@@ -242,7 +242,7 @@ ${sharedUtilsScript()}
 ${fixtureScript('__DEFAULT_FIXTURE__', defaultRadarFixture)}
 
 <script>
-var Predictor = axjs.Predictor;
+var Predictor = Ax.Predictor;
 
 var predictor = null;
 var params = [], paramBounds = [];

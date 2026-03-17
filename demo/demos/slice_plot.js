@@ -81,7 +81,7 @@ ${sharedUtilsScript()}
 ${fixtureScript('__DEFAULT_FIXTURE__', hartmannMixedFixture)}
 
 <script>
-var Predictor = axjs.Predictor;
+var Predictor = Ax.Predictor;
 
 var predictor = null;
 var fixture = null;

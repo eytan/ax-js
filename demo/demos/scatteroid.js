@@ -57,6 +57,11 @@ button:hover { background: #252528; }
 .param-row label {
   font-size: 10px; color: #777; width: 100px; text-align: right; flex-shrink: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  position: relative; z-index: 1;
+}
+.param-row .imp-bar {
+  position: absolute; right: 0; top: 1px; bottom: 1px; border-radius: 2px;
+  z-index: -1; opacity: 0.35;
 }
 .param-row input[type=range] {
   flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
@@ -83,7 +88,11 @@ button:hover { background: #252528; }
 }
 .legend-item {
   display: flex; align-items: center; gap: 5px; font-size: 11px; color: #888;
+  cursor: pointer; user-select: none; padding: 2px 6px; border-radius: 4px;
+  transition: opacity 0.15s;
 }
+.legend-item:hover { background: #1e1e24; }
+.legend-item.hidden-gen { opacity: 0.3; }
 .legend-swatch {
   width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
 }
@@ -113,14 +122,6 @@ button:hover { background: #252528; }
       <option value="kernel">kernel distance</option>
     </select>
   </label>
-  <label style="margin-left:8px">Show:
-    <select id="selFilter">
-      <option value="all">All</option>
-      <option value="Sobol">Sobol</option>
-      <option value="qEHVI">qEHVI (completed)</option>
-      <option value="candidates">Candidates</option>
-    </select>
-  </label>
   <button id="btnResample">resample</button>
   <button id="btnNewCand">+ candidate</button>
   <button id="btnExport">export JSON</button>
@@ -143,8 +144,8 @@ ${sharedUtilsScript()}
 
 <script>
 (function() {
-var Predictor = axjs.Predictor;
-var relativize = axjs.relativize;
+var Predictor = Ax.Predictor;
+var relativize = Ax.relativize;
 
 // ── VSIP test problem ──
 var NDIM = 7, NRESP = 9;
@@ -188,38 +189,60 @@ OPTIMIZATION_CONFIG.outcome_constraints.forEach(function(c) { constraintMap[c.na
 var thresholdMap = {};
 OPTIMIZATION_CONFIG.objective_thresholds.forEach(function(t) { thresholdMap[t.name] = t; });
 
-function evaluate(x) {
-  var x1=x[0],x2=x[1],x3=x[2],x4=x[3],x5=x[4],x6=x[5],x7=x[6];
-  return [
-    1.98 + 4.90*x1 + 6.67*x2 + 6.98*x3 + 4.01*x4 + 1.78*x5 + 0.001*x6 + 2.73*x7,
-    7.50 - 0.80*x1 - 0.60*x2 - 0.40*x3 - 0.50*x4 - 0.30*x5 + 0.30*x1*x2 + 0.20*x2*x3,
-    15.0 - 2.00*x1 - 1.50*x2 - 1.00*x3 - 1.50*x5 + 0.50*x1*x2 + 0.30*x5*x6,
-    38.0 - 4.00*x1 - 3.00*x2 - 2.00*x5 + 0.50*x1*x2 - 0.30*x3*x5 + x6,
-    42.0 - 6.00*x1 - 5.00*x2 - 3.00*x5 + 0.50*x1*x2 - 0.20*x1*x1,
-    40.0 - 5.00*x1 - 4.00*x2 - 2.00*x3 - 2.00*x5 + 0.80*x1*x2,
-    6.00 - 0.80*x1 - 0.90*x2 - 0.60*x5 - 0.40*x6 + 0.30*x1*x5,
-    0.50 - 0.08*x1 - 0.07*x2 - 0.05*x5 + 0.02*x1*x2,
-    1.40 - 0.18*x1 - 0.15*x2 - 0.12*x3 - 0.08*x5 + 0.05*x2*x3
+// ── Pre-baked fixture data (Sobol X/Y, qEHVI X/Y, candidate X) ──
+// Generated once via Pareto front computation: qEHVI and candidates are
+// non-dominated feasible points with farthest-point diversity sampling.
+// Y values include fixed observation noise (5% of outcome range).
+var FIXTURE_SOBOL_X = [
+    [0.5625,1.2500,1.1400,0.6633,2.1477,0.8923,0.7765],
+    [1.0625,0.4833,1.3400,0.8061,2.3068,0.9538,0.8235],
+    [0.8125,0.7833,0.5800,0.9490,2.4659,1.0154,0.8706],
+    [1.3125,1.0833,0.7800,1.0918,0.8895,1.0769,0.9176],
+    [0.6875,0.5833,0.9800,1.2347,1.0486,1.1385,0.9647],
+    [1.1875,0.8833,1.1800,1.3776,1.2076,0.4047,1.0118],
+    [0.9375,1.1833,1.3800,0.5408,1.3667,0.4663,1.0588],
+    [1.4375,0.6833,0.6200,0.6837,1.5258,0.5278,1.1059]
   ];
+var FIXTURE_SOBOL_Y = [
+    [29.5496,5.4892,8.5507,28.3582,26.0185,26.2259,3.2436,0.2818,0.8739],
+    [29.2600,5.1300,8.4058,27.8960,26.1785,24.9238,3.6024,0.2726,0.8065],
+    [25.6585,5.3183,9.1263,28.8464,25.1950,27.3283,3.4238,0.2665,0.8980],
+    [29.7914,5.2132,9.4320,27.9999,26.4629,26.8687,3.3774,0.2971,0.8961],
+    [24.2727,5.5389,10.9718,31.8968,32.6158,29.9938,3.9865,0.3538,0.9835],
+    [33.1458,4.9696,9.1446,29.4231,26.9569,27.4349,3.8075,0.2991,0.8537],
+    [33.2413,5.4213,9.2514,28.0020,27.1778,25.5626,3.3805,0.3053,0.8740],
+    [24.8074,5.2685,9.1002,27.2805,24.8371,25.7834,3.7158,0.2706,0.8775]
+  ];
+var FIXTURE_EHVI_X = [
+    [0.8977,0.4721,0.5763,0.9214,2.0778,0.5625,0.4565],
+    [1.4786,1.1985,1.3328,1.4923,2.2859,1.1770,0.9106],
+    [1.3023,0.9103,0.8629,1.0084,2.5418,0.4166,0.5110],
+    [1.4764,1.0423,1.4425,0.6113,2.5930,0.6108,0.4731],
+    [1.4481,0.4849,0.5495,1.1153,2.1376,0.5178,0.5030]
+  ];
+var FIXTURE_EHVI_Y = [
+    [21.8226,5.4237,9.3519,29.0098,29.0883,29.1847,3.9634,0.2866,0.9162],
+    [39.2751,4.5225,7.0370,24.6250,20.5152,22.6175,2.8427,0.2187,0.6612],
+    [31.4873,4.8815,6.9996,25.6185,22.6654,23.3159,3.4192,0.2268,0.7566],
+    [33.0052,4.8042,6.3046,24.7057,21.1043,21.3162,3.0901,0.2087,0.6608],
+    [25.4617,4.8249,8.3307,26.7621,24.5719,25.0565,3.7961,0.2804,0.8138]
+  ];
+var FIXTURE_CAND_X = [
+    [1.3332,0.4936,0.7389,1.1505,2.6214,0.9114,0.9670],
+    [1.4441,0.9909,1.4170,1.3217,2.5846,0.4849,0.4528],
+    [0.5527,0.5337,0.5425,0.8523,2.3115,0.6893,0.5857],
+    [1.0700,0.8376,0.5748,0.5486,2.6172,0.5669,0.4811],
+    [1.3720,0.6039,1.3478,1.0967,2.5110,0.4433,0.6792]
+  ];
+
+// ── Batch color palette ──
+// Each batch gets a distinct color. Shapes distinguish completed (circle) vs candidate (star).
+var BATCH_PALETTE = ['#7c8cc8', '#4ecdc4', '#e8b84d', '#c57bdb', '#e07b9d', '#8cc87c', '#c8a87c', '#7cc8c8'];
+function batchColor(batchIdx) {
+  return BATCH_PALETTE[batchIdx % BATCH_PALETTE.length];
 }
 
-function randn() {
-  var u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-}
-
-// ── Generation method definitions ──
-var GEN_METHODS = {
-  'Sobol':           { color: '#7c8cc8', label: 'Sobol' },
-  'qEHVI':           { color: '#4ecdc4', label: 'qEHVI' },
-  'qEHVI (pending)': { color: '#e8b84d', label: 'qEHVI (pending)' },
-  'Manual':          { color: '#ff6b6b', label: 'Manual' }
-};
-
-// ── Real VSIP hyperparameters from BoTorch-fitted fixture ──
-var NOISE_FRAC = 0.05;
+// ── Real VSIP hyperparameters (from BoTorch-fitted fixture) ──
 var HP = [
   { ls: [1.6267,1.2128,1.2446,1.6253,3.608,8.932,1.7659],   mc: 0.0791, ot_mean: 29.7373, ot_std: 2.8713 },
   { ls: [1.307,1.3154,1.8387,1.2458,2.389,8.2335,7.9159],    mc:-0.1650, ot_mean: 5.0977,  ot_std: 0.2551 },
@@ -242,125 +265,49 @@ var SEARCH_SPACE = {
   })
 };
 
-// Compute outcome ranges for noise calibration
-var rangeSample = [];
-for (var ri = 0; ri < 500; ri++) {
-  rangeSample.push(BOUNDS.map(function(b) { return b[0] + Math.random()*(b[1]-b[0]); }));
-}
-var rangeEvals = rangeSample.map(evaluate);
-var outcomeRanges = [];
-for (var k = 0; k < NRESP; k++) {
-  var vals = rangeEvals.map(function(e) { return e[k]; });
-  outcomeRanges.push(Math.max.apply(null, vals) - Math.min.apply(null, vals));
-}
-
-// ── Quasi-random Sobol-like sampling (Halton sequence) ──
-function halton(index, base) {
-  var result = 0, f = 1;
-  var i = index;
-  while (i > 0) {
-    f /= base;
-    result += f * (i % base);
-    i = Math.floor(i / base);
-  }
-  return result;
-}
-var HALTON_BASES = [2, 3, 5, 7, 11, 13, 17];
-
-function generateSobolPoints(n, offset) {
-  var pts = [];
-  for (var i = 0; i < n; i++) {
-    var pt = [];
-    for (var j = 0; j < NDIM; j++) {
-      var h = halton(i + offset + 1, HALTON_BASES[j]);
-      pt.push(BOUNDS[j][0] + h * (BOUNDS[j][1] - BOUNDS[j][0]));
-    }
-    pts.push(pt);
-  }
-  return pts;
-}
-
-// ── Generate NEHVI-biased points (simulate optimizer suggestions) ──
-function generateNEHVIPoints(n, completedArms, targetObjectives) {
-  // Pick from the completed arms that are best on the target objectives,
-  // then perturb slightly to simulate NEHVI suggestions
-  var targetIdxs = targetObjectives.map(function(name) { return OUTCOME_NAMES.indexOf(name); });
-  var scored = completedArms.map(function(arm, i) {
-    var totalScore = 0;
-    targetIdxs.forEach(function(oi) {
-      // Lower is better (minimize objectives)
-      totalScore -= arm.evals[oi];
-    });
-    return { idx: i, score: totalScore };
-  });
-  scored.sort(function(a, b) { return b.score - a.score; });
-
-  var pts = [];
-  for (var i = 0; i < n; i++) {
-    // Pick from top performers with some randomness
-    var srcIdx = scored[i % Math.min(scored.length, n * 2)].idx;
-    var src = completedArms[srcIdx].params;
-    var pt = [];
-    for (var j = 0; j < NDIM; j++) {
-      var range = BOUNDS[j][1] - BOUNDS[j][0];
-      var perturbed = src[j] + randn() * range * 0.08;
-      pt.push(Math.max(BOUNDS[j][0], Math.min(BOUNDS[j][1], perturbed)));
-    }
-    pts.push(pt);
-  }
-  return pts;
-}
+// Observation noise SD per outcome (5% of outcome range, pre-computed)
+var NOISE_SD = [0.8838,0.0648,0.2429,0.4783,0.5892,0.5083,0.0546,0.0069,0.0243];
 
 // ── Arm data model ──
-// arms: [{idx, armName, params, evals, trialIndex, batchIndex, trialStatus, generationMethod, preds, relData}]
 var arms = [];
-var candidates = [];  // [{id, name, params, trialIndex, batchIndex, generationMethod, isFromFixture, preds, relData}]
+var candidates = [];
 var nextCandidateId = 1;
 var predictor = null;
 var sqIdx = 0;
 
-function buildExperiment() {
+function buildFromFixture(sobolX, sobolY, ehviX, ehviY, candX) {
   arms = [];
   candidates = [];
   nextCandidateId = 1;
   var armIdx = 0;
 
-  // Batch 0: 8 Sobol points (COMPLETED) — quasi-random initialization
-  var sobolPts = generateSobolPoints(8, Math.floor(Math.random() * 100));
-  sobolPts.forEach(function(pt, i) {
-    var ev = evaluate(pt);
-    var noisyEvals = ev.map(function(v, k) { return v + NOISE_FRAC * outcomeRanges[k] * randn(); });
+  // Batch 0: Sobol (COMPLETED)
+  sobolX.forEach(function(pt, i) {
     arms.push({
-      idx: armIdx, armName: 'arm_0_' + i, params: pt, evals: noisyEvals,
+      idx: armIdx, armName: 'arm_0_' + i, params: pt, evals: sobolY[i],
       trialIndex: i, batchIndex: 0, trialStatus: 'COMPLETED', generationMethod: 'Sobol'
     });
     armIdx++;
   });
 
-  // Batch 1: 5 qEHVI with all 3 objectives + constraints (COMPLETED)
-  var ehviPts = generateNEHVIPoints(5, arms, ['weight', 'acceleration', 'intrusion']);
-  ehviPts.forEach(function(pt, i) {
-    var ev = evaluate(pt);
-    var noisyEvals = ev.map(function(v, k) { return v + NOISE_FRAC * outcomeRanges[k] * randn(); });
+  // Batch 1: qEHVI (COMPLETED)
+  ehviX.forEach(function(pt, i) {
     arms.push({
-      idx: armIdx, armName: 'arm_1_' + i, params: pt, evals: noisyEvals,
-      trialIndex: 8 + i, batchIndex: 1, trialStatus: 'COMPLETED', generationMethod: 'qEHVI'
+      idx: armIdx, armName: 'arm_1_' + i, params: pt, evals: ehviY[i],
+      trialIndex: sobolX.length + i, batchIndex: 1, trialStatus: 'COMPLETED', generationMethod: 'qEHVI'
     });
     armIdx++;
   });
 
-  // Build the GP model from completed arms only
-  var completedArms = arms.filter(function(a) { return a.trialStatus === 'COMPLETED'; });
-  var trainX = completedArms.map(function(a) { return a.params; });
-
+  // Build GP model from completed arms
+  var trainX = arms.map(function(a) { return a.params; });
   var subModels = [];
   for (var k = 0; k < NRESP; k++) {
     var hp = HP[k];
-    var noiseSd = NOISE_FRAC * outcomeRanges[k];
-    var noiseVar = noiseSd * noiseSd;
-    var trainY = completedArms.map(function(a) { return (a.evals[k] - hp.ot_mean) / hp.ot_std; });
+    var noiseVar = NOISE_SD[k] * NOISE_SD[k];
+    var trainY = arms.map(function(a) { return (a.evals[k] - hp.ot_mean) / hp.ot_std; });
     var stdNoiseVar = noiseVar / (hp.ot_std * hp.ot_std);
-    var trainYvar = completedArms.map(function() { return stdNoiseVar; });
+    var trainYvar = arms.map(function() { return stdNoiseVar; });
 
     subModels.push({
       model_type: 'SingleTaskGP',
@@ -374,12 +321,11 @@ function buildExperiment() {
     });
   }
 
-  // Pick SQ as arm closest to center
+  // SQ = arm closest to center of bounds
   var center = BOUNDS.map(function(b) { return (b[0]+b[1])/2; });
   var bestD = Infinity;
   sqIdx = 0;
   arms.forEach(function(arm, i) {
-    if (arm.trialStatus !== 'COMPLETED') return;
     var d = 0;
     for (var j = 0; j < NDIM; j++) {
       var rng = BOUNDS[j][1] - BOUNDS[j][0] || 1;
@@ -399,24 +345,23 @@ function buildExperiment() {
     status_quo: { point: arms[sqIdx].params }
   });
 
-  // Precompute predictions for all completed arms
+  // Precompute predictions for completed arms
   arms.forEach(function(arm) {
     arm.preds = predictor.predict([arm.params]);
   });
 
-  // Batch 2: 5 qEHVI candidates (CANDIDATE — pending, editable)
-  var candPts = generateNEHVIPoints(5, arms, ['weight', 'acceleration', 'intrusion']);
-  candPts.forEach(function(pt, i) {
-    var cand = {
-      id: nextCandidateId++, name: 'cand_2_' + i, params: pt,
-      trialIndex: 13 + i, batchIndex: 2, generationMethod: 'qEHVI (pending)',
-      isFromFixture: true, preds: null, relData: null
-    };
-    candidates.push(cand);
+  // Batch 2: qEHVI candidates (CANDIDATE — pending, editable)
+  candX.forEach(function(pt, i) {
+    candidates.push({
+      id: nextCandidateId++, armName: 'arm_2_' + i, params: pt.slice(),
+      trialIndex: arms.length + i, batchIndex: 2, trialStatus: 'CANDIDATE',
+      generationMethod: 'qEHVI', edited: false,
+      preds: null, relData: null
+    });
   });
 }
 
-buildExperiment();
+buildFromFixture(FIXTURE_SOBOL_X, FIXTURE_SOBOL_Y, FIXTURE_EHVI_X, FIXTURE_EHVI_Y, FIXTURE_CAND_X);
 
 var nArms = arms.length;
 var nDims = NDIM;
@@ -502,7 +447,6 @@ computePanelRange();
 var selX = document.getElementById('selX');
 var selY = document.getElementById('selY');
 var selSQ = document.getElementById('selSQ');
-var selFilter = document.getElementById('selFilter');
 
 outcomeNames.forEach(function(name, idx) {
   selX.innerHTML += '<option value="' + idx + '">' + name + '</option>';
@@ -524,7 +468,9 @@ function populateSQDropdown() {
 populateSQDropdown();
 
 var xOutIdx = 0, yOutIdx = 1;
-var activeFilter = 'all';
+
+// Legend-based visibility: set of hidden generation methods
+var hiddenGenMethods = {};
 
 // ── Selection state ──
 var selectedItem = null; // {type:'arm'|'candidate', idx:number}
@@ -606,28 +552,64 @@ function niceRange(pts, getVal, getSem) {
   return { lo: lo, hi: hi, ticks: ticks };
 }
 
-function isItemVisible(genMethod) {
-  if (activeFilter === 'all') return true;
-  if (activeFilter === 'candidates') return genMethod === 'qEHVI (pending)' || genMethod === 'Manual';
-  return genMethod === activeFilter;
+function isItemVisible(genMethod, batchIndex) {
+  var key = genMethod + ':' + batchIndex;
+  return !hiddenGenMethods[key];
 }
 
-function getGenColor(genMethod) {
-  return GEN_METHODS[genMethod] ? GEN_METHODS[genMethod].color : '#7c8cc8';
+// Build legend dynamically from actual batches present in the data.
+// Each batch gets: "Method (N)" where N is the batch index.
+function buildLegendItems() {
+  // Collect unique batches from arms and candidates, preserving order
+  var seen = {};
+  var items = [];
+  function addBatch(method, batch, isCand) {
+    var key = method + ':' + batch;
+    if (seen[key]) return;
+    seen[key] = true;
+    items.push({ key: key, method: method, batch: batch, isCand: isCand, color: batchColor(batch) });
+  }
+  arms.forEach(function(a) { addBatch(a.generationMethod, a.batchIndex, false); });
+  candidates.forEach(function(c) { addBatch(c.generationMethod, c.batchIndex, true); });
+  return items;
 }
 
 function renderLegend() {
+  var items = buildLegendItems();
   var html = '';
-  html += '<div class="legend-item"><div class="legend-swatch" style="background:#7c8cc8"></div>Sobol</div>';
-  html += '<div class="legend-item"><div class="legend-swatch" style="background:#4ecdc4"></div>qEHVI</div>';
-  html += '<div class="legend-item"><div class="legend-swatch diamond" style="border-color:#7c8cc8"></div>Status Quo</div>';
-  html += '<div class="legend-item"><svg width="12" height="12"><polygon points="' +
-    starPoints(6,6,6) + '" fill="none" stroke="#e8b84d" stroke-width="1.5"/></svg>Candidate</div>';
-  html += '<div class="legend-item"><svg width="12" height="12"><polygon points="' +
-    starPoints(6,6,6) + '" fill="#ff6b6b" stroke="#ff6b6b" stroke-width="0.5"/></svg>Manual</div>';
+  items.forEach(function(item) {
+    var isHidden = hiddenGenMethods[item.key];
+    var swatch;
+    if (item.isCand) {
+      swatch = '<svg width="12" height="12"><polygon points="' + starPoints(6,6,6) +
+        '" fill="' + item.color + '" stroke="' + item.color + '" stroke-width="0.5"/></svg>';
+    } else {
+      swatch = '<div class="legend-swatch" style="background:' + item.color + '"></div>';
+    }
+    html += '<div class="legend-item' + (isHidden ? ' hidden-gen' : '') +
+            '" data-gen="' + item.key + '">' + swatch + item.method + ' (' + item.batch + ')</div>';
+  });
   legendEl.innerHTML = html;
 }
 renderLegend();
+
+legendEl.addEventListener('click', function(e) {
+  var el = e.target;
+  while (el && el !== legendEl) {
+    var gen = el.getAttribute && el.getAttribute('data-gen');
+    if (gen) {
+      if (hiddenGenMethods[gen]) {
+        delete hiddenGenMethods[gen];
+      } else {
+        hiddenGenMethods[gen] = true;
+      }
+      renderLegend();
+      renderScatter();
+      return;
+    }
+    el = el.parentNode;
+  }
+});
 
 function renderScatter() {
   var xName = outcomeNames[xOutIdx];
@@ -642,7 +624,8 @@ function renderScatter() {
     if (rx && ry) {
       pts.push({ idx: i, type: 'arm', x: rx.mean, y: ry.mean,
                  xSem: rx.sem, ySem: ry.sem, genMethod: arm.generationMethod,
-                 visible: isItemVisible(arm.generationMethod) });
+                 batch: arm.batchIndex,
+                 visible: isItemVisible(arm.generationMethod, arm.batchIndex) });
     }
   });
   candidates.forEach(function(cand, ci) {
@@ -652,7 +635,8 @@ function renderScatter() {
     if (crx && cry) {
       pts.push({ idx: ci, type: 'candidate', x: crx.mean, y: cry.mean,
                  xSem: crx.sem, ySem: cry.sem, genMethod: cand.generationMethod,
-                 visible: isItemVisible(cand.generationMethod) });
+                 batch: cand.batchIndex,
+                 visible: isItemVisible(cand.generationMethod, cand.batchIndex) });
     }
   });
 
@@ -712,55 +696,45 @@ function renderScatter() {
     var isCandidate = (p.type === 'candidate');
     var isSelected = selectedItem && selectedItem.type === p.type && selectedItem.idx === p.idx;
     var cx = sx(p.x), cy = sy(p.y);
-    var genColor = getGenColor(p.genMethod);
+    var color = batchColor(p.batch);
 
     html += '<g data-idx="' + p.idx + '" data-type="' + p.type + '" style="cursor:pointer">';
 
     // Hit area
     html += '<circle cx="' + cx + '" cy="' + cy + '" r="14" fill="transparent"/>';
 
-    // CI crosshairs — color from generation method
-    var ciAlpha = isCandidate ? 0.5 : 0.4;
-    var ciColor = isSelected ? '#994040' : genColor;
-    var ci75Color = isSelected ? '#bb5050' : genColor;
-
+    // CI crosshairs — batch color
+    var ciAlpha = isSelected ? 0.6 : (isCandidate ? 0.5 : 0.4);
     var xLo95 = sx(p.x - CI_Z.c95 * p.xSem), xHi95 = sx(p.x + CI_Z.c95 * p.xSem);
     var yLo95 = sy(p.y - CI_Z.c95 * p.ySem), yHi95 = sy(p.y + CI_Z.c95 * p.ySem);
     html += '<line x1="' + xLo95 + '" y1="' + cy + '" x2="' + xHi95 + '" y2="' + cy +
-            '" stroke="' + ciColor + '" stroke-width="1" opacity="' + ciAlpha + '"/>';
+            '" stroke="' + color + '" stroke-width="1" opacity="' + ciAlpha + '"/>';
     html += '<line x1="' + cx + '" y1="' + yLo95 + '" x2="' + cx + '" y2="' + yHi95 +
-            '" stroke="' + ciColor + '" stroke-width="1" opacity="' + ciAlpha + '"/>';
+            '" stroke="' + color + '" stroke-width="1" opacity="' + ciAlpha + '"/>';
     var xLo75 = sx(p.x - CI_Z.c75 * p.xSem), xHi75 = sx(p.x + CI_Z.c75 * p.xSem);
     var yLo75 = sy(p.y - CI_Z.c75 * p.ySem), yHi75 = sy(p.y + CI_Z.c75 * p.ySem);
     html += '<line x1="' + xLo75 + '" y1="' + cy + '" x2="' + xHi75 + '" y2="' + cy +
-            '" stroke="' + ci75Color + '" stroke-width="2.5" opacity="0.7"/>';
+            '" stroke="' + color + '" stroke-width="2.5" opacity="0.7"/>';
     html += '<line x1="' + cx + '" y1="' + yLo75 + '" x2="' + cx + '" y2="' + yHi75 +
-            '" stroke="' + ci75Color + '" stroke-width="2.5" opacity="0.7"/>';
+            '" stroke="' + color + '" stroke-width="2.5" opacity="0.7"/>';
 
     if (isSQ) {
-      // Open diamond for SQ — colored by its generation method
-      var s = 7;
+      var s = isSelected ? 9 : 7;
       html += '<polygon points="' + cx + ',' + (cy-s) + ' ' + (cx+s) + ',' + cy +
               ' ' + cx + ',' + (cy+s) + ' ' + (cx-s) + ',' + cy +
-              '" fill="none" stroke="' + genColor + '" stroke-width="2"/>';
+              '" fill="none" stroke="' + color + '" stroke-width="2"/>';
+      if (isSelected) html += '<polygon points="' + cx + ',' + (cy-s-2) + ' ' + (cx+s+2) + ',' + cy +
+              ' ' + cx + ',' + (cy+s+2) + ' ' + (cx-s-2) + ',' + cy +
+              '" fill="none" stroke="#fff" stroke-width="1" opacity="0.6"/>';
     } else if (isCandidate) {
-      var cand = candidates[p.idx];
       var starR = isSelected ? 9 : 7;
-      if (cand.generationMethod === 'Manual') {
-        // Filled star for user-created
-        html += '<polygon points="' + starPoints(cx, cy, starR) +
-                '" fill="#ff6b6b" stroke="#fff" stroke-width="' + (isSelected ? 1.5 : 0.5) + '"/>';
-      } else {
-        // Outline star for fixture candidates
-        html += '<polygon points="' + starPoints(cx, cy, starR) +
-                '" fill="none" stroke="#e8b84d" stroke-width="' + (isSelected ? 2.5 : 1.5) + '"/>';
-      }
+      html += '<polygon points="' + starPoints(cx, cy, starR) +
+              '" fill="' + color + '" stroke="' + (isSelected ? '#fff' : color) +
+              '" stroke-width="' + (isSelected ? 1.5 : 0.5) + '" fill-opacity="0.8"/>';
     } else {
-      var fill = isSelected ? '#ff6b6b' : genColor;
       var r = isSelected ? 6 : 4.5;
-      var strokeAttr = isSelected ? ' stroke="#fff" stroke-width="1.5"' : '';
       html += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r +
-              '" fill="' + fill + '"' + strokeAttr + '/>';
+              '" fill="' + color + '"' + (isSelected ? ' stroke="#fff" stroke-width="1.5"' : '') + '/>';
     }
     html += '</g>';
   });
@@ -850,16 +824,13 @@ function updateOpacities() {
 // ── Right panel: CI bars with constraint visualization ──
 // desiredSign: -1 = lower is better (minimize), +1 = higher is better, 0 = neutral
 function ciColors(mean, desiredSign) {
-  var isGood, isBad;
   if (desiredSign === 0) {
-    // No preference: default to positive=green
-    isGood = mean > 0;
-    isBad = mean < 0;
-  } else {
-    // Green when mean goes in desired direction, red when against
-    isGood = mean * desiredSign > 0;
-    isBad = mean * desiredSign < 0;
+    // No preference known — neutral gray
+    return { c99: '#2a2a2a', c95: '#4a4a4a', c75: '#6a6a6a', tick: '#444' };
   }
+  // Green when mean goes in desired direction, red when against
+  var isGood = mean * desiredSign > 0;
+  var isBad = mean * desiredSign < 0;
   if (isGood) return { c99: '#1a3a1a', c95: '#2a6a2a', c75: '#3a9a3a', tick: '#2a5a2a' };
   if (isBad) return { c99: '#3a1a1a', c95: '#7a2a2a', c75: '#b03030', tick: '#5a2020' };
   return { c99: '#2a2a2a', c95: '#4a4a4a', c75: '#6a6a6a', tick: '#444' };
@@ -872,6 +843,49 @@ function outcomeDesiredSign(name) {
   var con = constraintMap[name];
   if (con) return con.op === 'LEQ' ? -1 : 1;
   return 0;
+}
+
+// Standard normal CDF (Abramowitz & Stegun rational approximation)
+function normCDF(z) {
+  var t = 1 / (1 + 0.2316419 * Math.abs(z));
+  var d = 0.3989422813 * Math.exp(-z * z / 2);
+  var p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z > 0 ? 1 - p : p;
+}
+
+// Product of per-constraint P(feasible) using Gaussian CDF
+function probFeasible(preds) {
+  if (!preds) return null;
+  var constraints = OPTIMIZATION_CONFIG.outcome_constraints;
+  if (constraints.length === 0) return 1;
+  var pof = 1;
+  for (var i = 0; i < constraints.length; i++) {
+    var c = constraints[i];
+    var mean = preds[c.name].mean[0];
+    var std = Math.sqrt(Math.max(0, preds[c.name].variance[0])) + 1e-10;
+    var z = c.op === 'GEQ' ? (mean - c.bound) / std : (c.bound - mean) / std;
+    pof *= normCDF(z);
+  }
+  return pof;
+}
+
+// Continuous diverging color for P(feasible): green → olive → amber → red
+function pofColor(pof) {
+  // 5-stop interpolation: 0→red, 0.25→orange, 0.5→olive, 0.75→green-olive, 1→green
+  var stops = [
+    [176, 48, 48],   // 0.0: red
+    [192, 96, 48],   // 0.25: orange
+    [138, 138, 58],  // 0.5: olive/neutral
+    [80, 154, 68],   // 0.75: green-olive
+    [58, 154, 58]    // 1.0: green
+  ];
+  var t = Math.max(0, Math.min(1, pof));
+  var idx = t * (stops.length - 1);
+  var lo = Math.floor(idx), hi = Math.min(lo + 1, stops.length - 1), f = idx - lo;
+  var r = Math.round(stops[lo][0] + f * (stops[hi][0] - stops[lo][0]));
+  var g = Math.round(stops[lo][1] + f * (stops[hi][1] - stops[lo][1]));
+  var b = Math.round(stops[lo][2] + f * (stops[hi][2] - stops[lo][2]));
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
 function getDisplayItem() {
@@ -890,12 +904,19 @@ function getItemLabel(item) {
   if (!item) return '';
   if (item.type === 'candidate') {
     var cand = candidates[item.idx];
-    return cand.name + ' \\u2014 ' + cand.generationMethod;
+    var method = cand.generationMethod;
+    if (cand.edited) method += ' (edited)';
+    return cand.armName + ' \\u2014 ' + method;
   }
   var arm = arms[item.idx];
   var label = arm.armName + ' \\u2014 ' + arm.generationMethod;
   if (item.idx === sqIdx) label += ' (SQ)';
   return label;
+}
+
+function getItemStatusBadge(item) {
+  if (!item || item.type !== 'candidate') return '';
+  return ' <span style="color:#e8b84d;font-size:9px;font-weight:600">[PENDING]</span>';
 }
 
 function getItemPreds(item) {
@@ -914,12 +935,12 @@ function showDeltoid(item) {
 
   var itemRelData = getItemRelData(displayItem);
   if (!itemRelData) {
-    rpTitle.textContent = getItemLabel(displayItem) + ' \\u2014 no data';
+    rpTitle.innerHTML = getItemLabel(displayItem) + getItemStatusBadge(displayItem) + ' \\u2014 no data';
     rpBars.innerHTML = '';
     return;
   }
 
-  rpTitle.textContent = getItemLabel(displayItem) + ' \\u2014 % vs SQ';
+  rpTitle.innerHTML = getItemLabel(displayItem) + getItemStatusBadge(displayItem) + ' \\u2014 % vs SQ';
 
   // Get raw predictions for constraint checking
   var itemPreds = getItemPreds(displayItem);
@@ -990,21 +1011,28 @@ function showDeltoid(item) {
     s += '<g data-outcome="' + name + '" style="cursor:pointer">';
     s += '<rect x="0" y="' + (cy - rowH/2) + '" width="' + (labelW + pad + barW + pad) +
          '" height="' + rowH + '" fill="transparent"/>';
+    // Check constraint violation (need this before rendering label for badge)
+    var violated = false;
+    if (r && constraint && itemPreds) {
+      var predMean = itemPreds[name].mean[0];
+      var predVar = itemPreds[name].variance[0];
+      var predSem = Math.sqrt(Math.max(0, predVar));
+      if (constraint.op === 'LEQ' && predMean + 1.96 * predSem > constraint.bound) violated = true;
+      if (constraint.op === 'GEQ' && predMean - 1.96 * predSem < constraint.bound) violated = true;
+    }
+
+    // Violation badge: small triangle to the LEFT of the label
+    if (violated) {
+      var badgeX = labelW - 4 - labelText.length * 6.2 - 14;
+      s += '<text x="' + Math.max(2, badgeX) + '" y="' + (cy + 4) +
+           '" fill="#c66" font-size="12" font-family="sans-serif">\\u26A0</text>';
+    }
+
     s += '<text x="' + (labelW - 4) + '" y="' + (cy + 4) +
          '" text-anchor="end" fill="' + labelColor + '" font-size="11" font-family="sans-serif"' +
          (isActiveOutcome ? ' font-weight="600"' : '') + '>' + labelText + '</text>';
 
     if (r) {
-      // Check constraint violation
-      var violated = false;
-      if (constraint && itemPreds) {
-        var predMean = itemPreds[name].mean[0];
-        var predVar = itemPreds[name].variance[0];
-        var predSem = Math.sqrt(Math.max(0, predVar));
-        // Constraint violated if 95% CI crosses bound in wrong direction
-        if (constraint.op === 'LEQ' && predMean + 1.96 * predSem > constraint.bound) violated = true;
-        if (constraint.op === 'GEQ' && predMean - 1.96 * predSem < constraint.bound) violated = true;
-      }
 
       var desiredSign = outcomeDesiredSign(name);
       var cols = ciColors(r.mean, desiredSign);
@@ -1044,7 +1072,6 @@ function showDeltoid(item) {
 
       // Value annotation
       var valStr = r.mean.toFixed(2) + '\\u00B1' + (1.96 * r.sem).toFixed(2) + '%';
-      if (violated) valStr += ' \\u26A0';
       s += '<text x="' + (labelW + pad + barW + pad * 2) + '" y="' + (cy + 4) +
            '" fill="' + (violated ? '#c66' : '#777') + '" font-size="10" font-family="sans-serif">' + valStr + '</text>';
     } else {
@@ -1054,7 +1081,20 @@ function showDeltoid(item) {
     s += '</g>';
   });
   s += '</svg>';
-  rpBars.innerHTML = s;
+
+  // P(feasible) badge
+  var pof = probFeasible(itemPreds);
+  var pofHtml = '';
+  if (pof !== null) {
+    var pofPct = (pof * 100).toFixed(1);
+    var col = pofColor(pof);
+    pofHtml = '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:4px 0">';
+    pofHtml += '<span style="font-size:10px;color:#555;letter-spacing:.06em;text-transform:uppercase">P(feasible)</span>';
+    pofHtml += '<span style="font-size:15px;font-weight:600;color:' + col + '">' + pofPct + '%</span>';
+    pofHtml += '</div>';
+  }
+
+  rpBars.innerHTML = s + pofHtml;
 }
 
 // ── Click on outcome row to reorder sliders ──
@@ -1085,18 +1125,40 @@ function renderSliders() {
   var label = getItemLabel(selectedItem);
 
   var html = '<div class="slider-section">';
-  html += '<div class="section-title">' + label;
+  // Candidates get white title to indicate they're mutable
+  var titleStyle = isCandidate ? ' style="color:#e0e0e0"' : '';
+  var badge = getItemStatusBadge(selectedItem);
+  html += '<div class="section-title"' + titleStyle + '>' + label + badge;
 
-  if (!isCandidate) {
-    html += ' <button class="clone-btn" id="btnClone">clone as candidate</button>';
-  } else {
+  html += ' <button class="clone-btn" id="btnClone">clone</button>';
+  if (isCandidate) {
     html += ' <button class="delete-btn" id="btnDeleteCand">remove</button>';
   }
   html += '</div>';
 
-  // Show ordering hint if an outcome is selected
+  // Compute importance bars: 1/lengthscale, normalized to [0,1]
+  var impScores = new Array(nDims);
+  var maxImp = 0;
   if (sliderOutcome) {
+    // Single outcome: use that outcome's LS
+    var oi = outcomeNames.indexOf(sliderOutcome);
+    if (oi >= 0 && oi < HP.length) {
+      for (var d = 0; d < nDims; d++) {
+        impScores[d] = 1.0 / HP[oi].ls[d];
+        if (impScores[d] > maxImp) maxImp = impScores[d];
+      }
+    }
     html += '<div style="font-size:10px;color:#e8b84d;margin-bottom:6px">Sorted by ' + sliderOutcome + ' importance</div>';
+  } else {
+    // No outcome selected: geometric mean of 1/LS across all outcomes
+    for (var d = 0; d < nDims; d++) {
+      var logSum = 0;
+      for (var oi = 0; oi < HP.length; oi++) {
+        logSum += Math.log(1.0 / HP[oi].ls[d]);
+      }
+      impScores[d] = Math.exp(logSum / HP.length);
+      if (impScores[d] > maxImp) maxImp = impScores[d];
+    }
   }
 
   // Use importance-ordered dims if an outcome is selected, else default order
@@ -1107,8 +1169,16 @@ function renderSliders() {
     var bLo = paramBounds[j][0], bHi = paramBounds[j][1];
     var val = params[j];
     var step = (bHi - bLo) / 200;
+    var impFrac = maxImp > 0 ? impScores[j] / maxImp : 0;
+    var barW = Math.round(impFrac * 96); // max 96px within 100px label
+    var barColor = sliderOutcome ? '#e8b84d' : '#7c8cc8';
     html += '<div class="param-row">';
-    html += '<label>' + paramNames[j] + '</label>';
+    var labelStyle = isEditable ? ' style="color:#bbb"' : '';
+    html += '<label' + labelStyle + '>' + paramNames[j];
+    if (barW > 2) {
+      html += '<span class="imp-bar" style="width:' + barW + 'px;background:' + barColor + '"></span>';
+    }
+    html += '</label>';
     html += '<input type="range" min="' + bLo + '" max="' + bHi + '" step="' + step +
             '" value="' + val + '" data-dim="' + j + '"' + (isEditable ? '' : ' disabled') + '>';
     html += '<span class="param-val" id="pval' + j + '">' + val.toFixed(3) + '</span>';
@@ -1117,14 +1187,14 @@ function renderSliders() {
   html += '</div>';
   rpSliders.innerHTML = html;
 
-  if (!isCandidate) {
-    document.getElementById('btnClone').addEventListener('click', function() {
-      cloneArm(selectedItem.idx);
-    });
-  } else {
-    var candIdx = selectedItem.idx;
+  // Clone button — works for both arms and candidates
+  document.getElementById('btnClone').addEventListener('click', function() {
+    cloneItem(selectedItem.type, selectedItem.idx);
+  });
+
+  if (isCandidate) {
     document.getElementById('btnDeleteCand').addEventListener('click', function() {
-      deleteCandidate(candIdx);
+      deleteCandidate(selectedItem.idx);
     });
     var sliders = rpSliders.querySelectorAll('input[type=range]');
     for (var si = 0; si < sliders.length; si++) {
@@ -1133,6 +1203,18 @@ function renderSliders() {
           var dim = parseInt(slider.getAttribute('data-dim'));
           var cand = candidates[selectedItem.idx];
           cand.params[dim] = parseFloat(slider.value);
+          if (!cand.edited) {
+            cand.edited = true;
+            // Update slider section title in-place to show (edited)
+            var titleEl = rpSliders.querySelector('.section-title');
+            if (titleEl) {
+              var newLabel = getItemLabel(selectedItem) + getItemStatusBadge(selectedItem);
+              // Preserve buttons at the end
+              var btns = titleEl.querySelectorAll('button');
+              titleEl.innerHTML = newLabel;
+              for (var b = 0; b < btns.length; b++) titleEl.appendChild(btns[b]);
+            }
+          }
           document.getElementById('pval' + dim).textContent = cand.params[dim].toFixed(3);
           predictCandidate(cand);
           renderScatter();
@@ -1144,18 +1226,42 @@ function renderSliders() {
 }
 
 // ── Candidate management ──
-function cloneArm(armIdx) {
-  var arm = arms[armIdx];
+// Manual candidates all share a single batch index (one above the highest existing)
+function manualBatchIdx() {
+  var maxBatch = -1;
+  arms.forEach(function(a) { if (a.batchIndex > maxBatch) maxBatch = a.batchIndex; });
+  // Fixture candidates have their own batch; manual batch is one above the highest non-manual
+  candidates.forEach(function(c) {
+    if (c.generationMethod !== 'Manual' && c.batchIndex > maxBatch) maxBatch = c.batchIndex;
+  });
+  return maxBatch + 1;
+}
+
+// Clone any item (arm or candidate) into a new Manual candidate.
+// NOTE: "edited" is UI-only metadata not present in the axjs ExperimentState schema.
+// It tracks whether the user has modified parameters via sliders after cloning.
+// TODO: consider a richer edit-tracking mechanism (e.g., diff from source params)
+// if this demo evolves into a production tool.
+function cloneItem(sourceType, sourceIdx) {
+  var srcParams;
+  if (sourceType === 'candidate') {
+    srcParams = candidates[sourceIdx].params;
+  } else {
+    srcParams = arms[sourceIdx].params;
+  }
+  var batch = manualBatchIdx();
+  var idxInBatch = candidates.filter(function(c) { return c.batchIndex === batch; }).length;
   var cand = {
-    id: nextCandidateId++, name: 'Candidate ' + (nextCandidateId - 1),
-    params: arm.params.slice(),
-    trialIndex: null, batchIndex: null,
-    generationMethod: 'Manual', isFromFixture: false,
+    id: nextCandidateId++, armName: 'arm_' + batch + '_' + idxInBatch,
+    params: srcParams.slice(),
+    trialIndex: null, batchIndex: batch, trialStatus: 'CANDIDATE',
+    generationMethod: 'Manual', edited: false,
     preds: null, relData: null
   };
   predictCandidate(cand);
   candidates.push(cand);
   selectedItem = { type: 'candidate', idx: candidates.length - 1 };
+  renderLegend();
   renderScatter();
   showDeltoid(null);
   renderSliders();
@@ -1163,15 +1269,18 @@ function cloneArm(armIdx) {
 
 function createNewCandidate() {
   var center = paramBounds.map(function(b) { return (b[0]+b[1])/2; });
+  var batch = manualBatchIdx();
+  var idxInBatch = candidates.filter(function(c) { return c.batchIndex === batch; }).length;
   var cand = {
-    id: nextCandidateId++, name: 'Candidate ' + (nextCandidateId - 1),
-    params: center, trialIndex: null, batchIndex: null,
-    generationMethod: 'Manual', isFromFixture: false,
+    id: nextCandidateId++, armName: 'arm_' + batch + '_' + idxInBatch,
+    params: center, trialIndex: null, batchIndex: batch, trialStatus: 'CANDIDATE',
+    generationMethod: 'Manual', edited: false,
     preds: null, relData: null
   };
   predictCandidate(cand);
   candidates.push(cand);
   selectedItem = { type: 'candidate', idx: candidates.length - 1 };
+  renderLegend();
   renderScatter();
   showDeltoid(null);
   renderSliders();
@@ -1183,6 +1292,7 @@ function deleteCandidate(candIdx) {
     if (selectedItem.idx === candIdx) selectedItem = null;
     else if (selectedItem.idx > candIdx) selectedItem.idx--;
   }
+  renderLegend();
   renderScatter();
   showDeltoid(null);
   renderSliders();
@@ -1196,9 +1306,10 @@ function exportCandidates() {
       params[paramNames[j]] = Math.round(c.params[j] * 1e6) / 1e6;
     }
     return {
-      arm_name: c.name,
+      arm_name: c.armName,
       parameters: params,
-      generation_method: c.generationMethod
+      trial_index: c.trialIndex,
+      generation_method: c.generationMethod + (c.edited ? ' (edited)' : '')
     };
   });
   var json = JSON.stringify(data, null, 2);
@@ -1287,18 +1398,16 @@ selSQ.addEventListener('change', function() {
   showDeltoid(null);
 });
 selDistMode.addEventListener('change', function() { updateOpacities(); });
-selFilter.addEventListener('change', function() {
-  activeFilter = selFilter.value;
-  renderScatter();
-});
 
 document.getElementById('btnResample').addEventListener('click', function() {
   selectedItem = null;
   hoveredItem = null;
+  sliderOutcome = null;
+  sliderDimOrder = null;
   rpTitle.textContent = 'Hover over an arm to see all outcomes';
   rpBars.innerHTML = '';
   rpSliders.innerHTML = '';
-  buildExperiment();
+  buildFromFixture(FIXTURE_SOBOL_X, FIXTURE_SOBOL_Y, FIXTURE_EHVI_X, FIXTURE_EHVI_Y, FIXTURE_CAND_X);
   nArms = arms.length;
   computeAllRelData();
   computePanelRange();

@@ -144,8 +144,8 @@ ${libraryScript()}
 ${sharedColormapScript()}
 
 <script>
-var loadModel = axjs.loadModel;
-var Predictor = axjs.Predictor;
+var loadModel = Ax.loadModel;
+var Predictor = Ax.Predictor;
 var CN = 320, GS = 60;
 var N_CAND = 1000, N_FEAT = 256, N_ITER = 50, N_INIT = 3, DELAY_MS = 100;
 var running = false;

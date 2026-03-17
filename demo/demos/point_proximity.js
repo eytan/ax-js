@@ -178,7 +178,7 @@ ${libraryScript()}
 ${sharedColormapScript()}
 
 <script>
-var Predictor = axjs.Predictor;
+var Predictor = Ax.Predictor;
 
 // ─── Ackley test function ───────────────────────────────────────
 function ackley(x) {

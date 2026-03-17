@@ -20,6 +20,7 @@ import crossValidation from './demos/cross_validation.js';
 import featureImportance from './demos/feature_importance.js';
 import optimizationTrace from './demos/optimization_trace.js';
 import bayesianOptimization from './demos/bayesian_optimization.js';
+import preferenceExplorer from './demos/preference_explorer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -33,6 +34,7 @@ const demos = [
   ['feature_importance.html', featureImportance],
   ['optimization_trace.html', optimizationTrace],
   ['bayesian_optimization.html', bayesianOptimization],
+  ['pbo.html', preferenceExplorer],
 ];
 
 for (const [filename, buildFn] of demos) {

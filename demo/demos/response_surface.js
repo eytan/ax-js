@@ -124,7 +124,7 @@ ${sharedColormapScript()}
 ${fixtureScript('__DEFAULT_FIXTURE__', penicillinFixture)}
 
 <script>
-var Predictor = axjs.Predictor;
+var Predictor = Ax.Predictor;
 
 var N = 320, GS = 60;
 var ML = 48, MT = 0, MB = 38; // margins: left, top, bottom (pixels)

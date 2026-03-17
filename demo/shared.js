@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 
-export const iifeBundle = readFileSync(join(root, 'dist/index.global.js'), 'utf8');
+export const iifeBundle = readFileSync(join(root, 'dist/ax.global.js'), 'utf8');
 export const braninFixture = readFileSync(join(root, 'test/fixtures/branin_matern25.json'), 'utf8');
 export const hartmannMixedFixture = readFileSync(join(root, 'test/fixtures/hartmann_mixed.json'), 'utf8');
 export const penicillinFixture = readFileSync(join(root, 'test/fixtures/penicillin_modellist.json'), 'utf8');
@@ -101,7 +101,7 @@ export function sharedUtilsScript() {
 }
 
 // Inline Ax logo SVG (white wireframe, links back to index)
-export const axIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="22" height="22" style="vertical-align:-3px;margin-right:8px;opacity:0.7"><path fill="#fff" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg>`;
+export const axIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="29" height="29" style="vertical-align:-4px;margin-right:8px;opacity:0.7"><path fill="#fff" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg>`;
 export const axHomeLink = `<a href="index.html" style="text-decoration:none">${axIconSvg}</a>`;
 
 // Shared colormap functions used by response_surface, point_proximity, bayesian_optimization
@@ -139,4 +139,37 @@ function drawColorbar(id, cfn) {
 
 export function sharedColormapScript() {
   return `<script>\n${sharedColormapCode}\n</script>`;
+}
+
+// Shared data-point dot rendering used by response_surface, point_proximity,
+// bayesian_optimization, preference_explorer.
+// Standard style: outer white ring + inner colored fill, with opacity scaling.
+//   ctx:       canvas 2d context
+//   x, y:      pixel coordinates
+//   alpha:     opacity 0–1 (distance-based fade)
+//   isActive:  boolean (click-pinned point — larger, full opacity)
+//   isHovered: boolean (mouse-hovering — larger)
+//   fillRGB:   [r,g,b] inner fill color (default [255,60,60] = red)
+export const sharedDotCode = `
+// Draw a data point with the standard outer-ring + inner-fill style.
+function drawDataDot(ctx, x, y, alpha, isActive, isHovered, fillRGB) {
+  if (alpha < 0.04) return;
+  var outerR = (isActive || isHovered) ? 7.5 : 5;
+  var innerR = (isActive || isHovered) ? 4 : 2.5;
+  fillRGB = fillRGB || [255, 60, 60];
+  ctx.beginPath(); ctx.arc(x, y, outerR, 0, 2 * Math.PI);
+  ctx.strokeStyle = isActive ? 'rgba(255,255,255,1)'
+    : 'rgba(255,255,255,' + Math.max(0.15, alpha * 0.6).toFixed(3) + ')';
+  ctx.lineWidth = isActive ? 2.5 : (isHovered ? 2 : 1.5);
+  ctx.stroke();
+  ctx.beginPath(); ctx.arc(x, y, innerR, 0, 2 * Math.PI);
+  ctx.fillStyle = (isActive || isHovered)
+    ? 'rgba(' + fillRGB[0] + ',' + fillRGB[1] + ',' + fillRGB[2] + ',1)'
+    : 'rgba(' + fillRGB[0] + ',' + fillRGB[1] + ',' + fillRGB[2] + ',' + alpha.toFixed(3) + ')';
+  ctx.fill();
+}
+`;
+
+export function sharedDotScript() {
+  return `<script>\n${sharedDotCode}\n</script>`;
 }

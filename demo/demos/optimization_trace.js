@@ -47,7 +47,7 @@ ${libraryScript()}
 ${fixtureScript('__DEFAULT_FIXTURE__', penicillinFixture)}
 ${sharedUtilsScript()}
 <script>
-var Predictor = axjs.Predictor;
+var Predictor = Ax.Predictor;
 var predictor, fixture, selectedOutcome;
 var pinnedIdx = -1;
 var tooltip = document.getElementById('tooltip');

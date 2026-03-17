@@ -60,7 +60,7 @@
 </head>
 <body>
 
-<h1><a href="index.html" style="text-decoration:none"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="22" height="22" style="vertical-align:-3px;margin-right:8px;opacity:0.7"><path fill="#fff" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg></a>Ax-Style 1D Slice Plots</h1>
+<h1><a href="index.html" style="text-decoration:none"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="29" height="29" style="vertical-align:-4px;margin-right:8px;opacity:0.7"><path fill="#fff" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg></a>Ax-Style 1D Slice Plots</h1>
 <p class="subtitle" id="subtitle">Load a fixture JSON to visualize GP posterior slices</p>
 
 <div class="controls">
@@ -75,7 +75,7 @@
 
 <script>
 "use strict";
-var axjs = (() => {
+var Ax = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -95,8 +95,8 @@ var axjs = (() => {
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // src/index.ts
-  var index_exports = {};
-  __export(index_exports, {
+  var src_exports = {};
+  __export(src_exports, {
     Predictor: () => Predictor,
     boundsInputTransform: () => boundsInputTransform,
     identityInputTransform: () => identityInputTransform,
@@ -2197,7 +2197,7 @@ var axjs = (() => {
       }
     }
   }
-  return __toCommonJS(index_exports);
+  return __toCommonJS(src_exports);
 })();
 
 </script>
@@ -2835,7 +2835,7 @@ var __DEFAULT_FIXTURE__ = {
 </script>
 
 <script>
-var Predictor = axjs.Predictor;
+var Predictor = Ax.Predictor;
 
 var predictor = null;
 var fixture = null;

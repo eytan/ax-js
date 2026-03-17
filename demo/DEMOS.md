@@ -1,6 +1,6 @@
 # axjs Demo Suite
 
-Ten self-contained HTML demos built by `node demo/build_demos.js`.
+Eleven self-contained HTML demos built by `node demo/build_demos.js`.
 Each inlines the axjs IIFE bundle and default fixture data — no server required.
 
 ## Architecture
@@ -12,7 +12,7 @@ build_demos.js          # Node.js build script
 │   └── sharedColormapCode   — viridis(), plasma(), drawColorbar()
 ├── Template literals (one per demo)
 │   └── Each produces a self-contained HTML file
-└── writeFileSync × 10
+└── writeFileSync × 11
 ```
 
 **Data flow**: `test/fixtures/*.json` → `fixtureScript()` embeds as `__DEFAULT_FIXTURE__` → `loadFixtureData()` at runtime → `Predictor.predict()`.
@@ -86,7 +86,17 @@ build_demos.js          # Node.js build script
 - **Hyperparameter fitting**: Analytic MLL gradients, MAP priors (log-normal on noise/lengthscales/outputscale), 4 random restarts with 200 Adam steps each
 - **Rendering**: Canvas (3 heatmaps: true function, posterior mean, predictive std; plus LOO scatter)
 
-### 10. quickstart — API Reference & Live Demo
+### 10. preference_explorer — BOPE (Preference Learning)
+
+- **Default fixture**: None (fits PairwiseGP from scratch via Laplace approximation)
+- **Features**: Interactive 4D pairwise preference learning, two modes (auto with test functions, human with visual stimuli), two query strategies (EUBO default, MaxMean-vs-MaxVar), utility and uncertainty heatmaps with dimension sliders, convergence + self-consistency plot, comparison history, stimulus preview on hover
+- **GP setup**: PairwiseGP with ScaleKernel(RBF), ARD lengthscales [0.25]×4, adaptive outputscale, continuous candidate generation in [0,1]^4
+- **Algorithms**: Client-side probit log-likelihood, Laplace MAP estimation (Newton's method with line search), EUBO pair selection via MC sampling (128 samples × 200 random pairs)
+- **Stimulus types**: 6 parameterized 4D visual patterns (Plasma Waves, Op Art, Kaleidoscope, Nebula, Interference, Terrain) for human mode. Each parameter controls a distinct visual aspect
+- **Slice visualization**: Heatmaps show x0-x1 slice; sliders control x2, x3 values. Data point opacity scales with kernel distance in slice dimensions
+- **Rendering**: Canvas (2 heatmaps: utility mean viridis + uncertainty plasma, convergence dual-axis chart, stimulus canvases)
+
+### 11. quickstart — API Reference & Live Demo
 
 - **Default fixture**: `penicillin_modellist.json`
 - **Features**: Syntax-highlighted code examples, method/property tables, demo grid linking to all other demos, live section executing Predictor methods on the fixture
@@ -112,6 +122,12 @@ build_demos.js          # Node.js build script
 | `viridis(t)` | Viridis colormap (10-stop piecewise linear, t ∈ [0,1]) |
 | `plasma(t)` | Plasma colormap (9-stop piecewise linear) |
 | `drawColorbar(id, cfn)` | Render horizontal colorbar to a canvas element |
+
+### `sharedDotCode` (inlined via `sharedDotScript()`)
+
+| Function | Purpose |
+|----------|---------|
+| `drawDataDot(ctx, x, y, alpha, isActive, isHovered, fillRGB)` | Standard outer-ring + inner-fill data point (used by response_surface, point_proximity, bayesian_optimization, preference_explorer) |
 
 ## Key Visualization Concepts
 
