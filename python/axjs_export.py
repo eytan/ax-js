@@ -48,6 +48,74 @@ from _extraction import (
 _Y_TRANSFORM_NAMES = {"LogY", "BilogY", "PowerTransformY", "StandardizeY"}
 
 
+def _compose_unitx_if_needed(
+    adapter: Any, model_state: dict, search_space: Any
+) -> None:
+    """Compose UnitX normalization into exported model state.
+
+    Ax's adapter applies UnitX (raw → [0,1]) before the BoTorch model sees data.
+    After export_botorch_model(), train_X is in UnitX space. This function:
+    1. Converts train_X back to raw parameter space
+    2. Creates/adjusts input_transform to map raw → model's expected space
+
+    Only runs if UnitX is detected in the adapter's transforms.
+    """
+    # Check if UnitX is in the adapter's transforms
+    if not hasattr(adapter, "transforms"):
+        return
+    has_unitx = any(
+        type(tf).__name__ == "UnitX" for tf in adapter.transforms.values()
+    )
+    if not has_unitx:
+        return
+
+    # Extract bounds from search space
+    params = list(search_space.parameters.values())
+    lo = []
+    hi = []
+    for p in params:
+        if hasattr(p, "lower") and hasattr(p, "upper"):
+            lo.append(float(p.lower))
+            hi.append(float(p.upper))
+        else:
+            lo.append(0.0)
+            hi.append(1.0)
+
+    d = len(lo)
+
+    def _compose_single(state: dict) -> None:
+        """Un-UnitX train_X and compose UnitX into input_transform for one model."""
+        if "train_X" in state:
+            for pt in state["train_X"]:
+                for i in range(min(d, len(pt))):
+                    pt[i] = pt[i] * (hi[i] - lo[i]) + lo[i]
+
+        itf = state.get("input_transform")
+        if itf is None:
+            # No model-level Normalize — create one equivalent to UnitX
+            state["input_transform"] = {
+                "offset": lo[:],
+                "coefficient": [hi[i] - lo[i] for i in range(d)],
+            }
+        else:
+            # Compose: combined = Normalize ∘ UnitX
+            offset = itf["offset"]
+            coeff = itf["coefficient"]
+            n = min(d, len(offset))
+            for i in range(n):
+                span = hi[i] - lo[i]
+                if span > 0:
+                    offset[i] = lo[i] + offset[i] * span
+                    coeff[i] = coeff[i] * span
+
+    # Apply to all sub-models (ModelListGP) or the single model
+    if model_state.get("model_type") == "ModelListGP" and "models" in model_state:
+        for sub in model_state["models"]:
+            _compose_single(sub)
+    else:
+        _compose_single(model_state)
+
+
 def _get_search_space_info(search_space: Any) -> dict:
     """Extract parameter info from Ax search space.
 
@@ -140,6 +208,50 @@ def _extract_adapter_transforms(adapter: Any) -> list[dict] | None:
     return y_transforms if y_transforms else None
 
 
+def _extract_parameter_constraints(search_space: Any) -> list[dict] | None:
+    """Extract parameter constraints from Ax search space.
+
+    All Ax parameter constraints reduce to the linear form: Σ(w_i * x_i) ≤ bound.
+    - OrderConstraint: lower_param - upper_param ≤ 0
+    - SumConstraint: Σ(param_i) ≤ bound (or ≥)
+    - ParameterConstraint: general linear
+
+    Returns a list of constraint dicts, or None if no constraints.
+    """
+    constraints_list = getattr(search_space, "parameter_constraints", None)
+    if not constraints_list:
+        return None
+
+    result = []
+    for c in constraints_list:
+        cls_name = type(c).__name__
+
+        # Determine constraint type
+        if cls_name == "OrderConstraint":
+            ctype = "order"
+        elif cls_name == "SumConstraint":
+            ctype = "sum"
+        else:
+            ctype = "linear"
+
+        # constraint_dict: {param_name: weight}
+        constraint_dict = {}
+        if hasattr(c, "constraint_dict"):
+            constraint_dict = {k: float(v) for k, v in c.constraint_dict.items()}
+
+        # Determine op: Ax uses ComparisonOp.LEQ (0) and ComparisonOp.GEQ (1)
+        op_str = "GEQ" if getattr(c.op, "name", "") == "GEQ" else "LEQ"
+
+        result.append({
+            "type": ctype,
+            "constraint_dict": constraint_dict,
+            "bound": float(c.bound),
+            "op": op_str,
+        })
+
+    return result if result else None
+
+
 def _extract_optimization_config(experiment: Any) -> dict | None:
     """Extract optimization config (objectives + constraints) from Ax experiment.
 
@@ -174,12 +286,30 @@ def _extract_optimization_config(experiment: Any) -> dict | None:
         for c in oc.outcome_constraints:
             # ComparisonOp.LEQ = 0, ComparisonOp.GEQ = 1
             op_str = "GEQ" if c.op.name == "GEQ" else "LEQ"
-            constraints.append({
+            entry: dict[str, Any] = {
                 "name": c.metric.name,
                 "bound": float(c.bound),
                 "op": op_str,
-            })
+            }
+            if getattr(c, "relative", False):
+                entry["relative"] = True
+            constraints.append(entry)
         result["outcome_constraints"] = constraints
+
+    # Objective thresholds (MOO reference points)
+    if hasattr(oc, "objective_thresholds") and oc.objective_thresholds:
+        thresholds = []
+        for t in oc.objective_thresholds:
+            op_str = "GEQ" if getattr(t.op, "name", "") == "GEQ" else "LEQ"
+            entry = {
+                "name": t.metric.name,
+                "bound": float(t.bound),
+                "op": op_str,
+            }
+            if getattr(t, "relative", False):
+                entry["relative"] = True
+            thresholds.append(entry)
+        result["objective_thresholds"] = thresholds
 
     return result
 
@@ -187,7 +317,8 @@ def _extract_optimization_config(experiment: Any) -> dict | None:
 def _extract_observations(experiment: Any) -> list[dict] | None:
     """Extract observed trial data from an Ax experiment.
 
-    Returns a list of observation dicts [{arm_name, parameters, metrics}],
+    Returns a list of observation dicts [{arm_name, parameters, metrics,
+    trial_index?, trial_status?, generation_method?}],
     or None if no data is available.
     """
     try:
@@ -199,13 +330,25 @@ def _extract_observations(experiment: Any) -> list[dict] | None:
     if df is None or df.empty:
         return None
 
-    # Build arm_name → parameters lookup from trials
+    # Build arm_name → (parameters, trial_index, trial_status, generation_method)
     arm_params: dict[str, dict[str, float]] = {}
+    arm_trial_info: dict[str, dict[str, Any]] = {}
     for trial in experiment.trials.values():
+        trial_idx = trial.index
+        trial_status = trial.status.name if hasattr(trial, "status") else None
+        gen_method = None
+        if hasattr(trial, "generator_runs") and trial.generator_runs:
+            gen_run = trial.generator_runs[0]
+            gen_method = getattr(gen_run, "_model_key", None)
         for arm in trial.arms:
             if arm.name not in arm_params:
                 arm_params[arm.name] = {
                     k: float(v) for k, v in arm.parameters.items()
+                }
+                arm_trial_info[arm.name] = {
+                    "trial_index": trial_idx,
+                    "trial_status": trial_status,
+                    "generation_method": gen_method,
                 }
 
     # Group by arm_name
@@ -219,13 +362,51 @@ def _extract_observations(experiment: Any) -> list[dict] | None:
             if "sem" in row and row["sem"] is not None and row["sem"] == row["sem"]:
                 entry["sem"] = float(row["sem"])
             metrics[row["metric_name"]] = entry
-        observations.append({
+        obs: dict[str, Any] = {
             "arm_name": str(arm_name),
             "parameters": arm_params[arm_name],
             "metrics": metrics,
-        })
+        }
+        # Add trial metadata if available
+        info = arm_trial_info.get(str(arm_name), {})
+        if info.get("trial_index") is not None:
+            obs["trial_index"] = info["trial_index"]
+        if info.get("trial_status"):
+            obs["trial_status"] = info["trial_status"]
+        if info.get("generation_method"):
+            obs["generation_method"] = info["generation_method"]
+        observations.append(obs)
 
     return observations if observations else None
+
+
+def _extract_candidates(experiment: Any, generation_strategy: Any) -> list[dict] | None:
+    """Extract unevaluated candidate arms from the generation strategy.
+
+    Returns a list of candidate dicts [{arm_name?, parameters, trial_index?,
+    generation_method?}], or None if no candidates found.
+    """
+    candidates = []
+    for trial in experiment.trials.values():
+        status_name = trial.status.name if hasattr(trial, "status") else ""
+        if status_name not in ("CANDIDATE", "STAGED"):
+            continue
+        gen_method = None
+        if hasattr(trial, "generator_runs") and trial.generator_runs:
+            gen_run = trial.generator_runs[0]
+            gen_method = getattr(gen_run, "_model_key", None)
+        for arm in trial.arms:
+            candidate: dict[str, Any] = {
+                "parameters": {k: float(v) for k, v in arm.parameters.items()},
+            }
+            if arm.name:
+                candidate["arm_name"] = arm.name
+            candidate["trial_index"] = trial.index
+            if gen_method:
+                candidate["generation_method"] = gen_method
+            candidates.append(candidate)
+
+    return candidates if candidates else None
 
 
 def export_experiment(
@@ -260,8 +441,21 @@ def export_experiment(
         botorch_model = adapter.model.surrogate.model
     model_state = export_botorch_model(botorch_model)
 
+    # Compose UnitX into input_transform so axjs can predict on raw param values.
+    # Ax's adapter applies UnitX (maps raw → [0,1]) before the model sees data,
+    # so train_X in the model is in UnitX space. We need to un-UnitX train_X and
+    # adjust input_transform to accept raw inputs.
+    _compose_unitx_if_needed(adapter, model_state, experiment.search_space)
+
+    search_space_info = _get_search_space_info(experiment.search_space)
+
+    # Export parameter constraints (sum, order, linear)
+    param_constraints = _extract_parameter_constraints(experiment.search_space)
+    if param_constraints:
+        search_space_info["parameter_constraints"] = param_constraints
+
     result: dict[str, Any] = {
-        "search_space": _get_search_space_info(experiment.search_space),
+        "search_space": search_space_info,
         "model_state": model_state,
     }
 
@@ -297,6 +491,11 @@ def export_experiment(
     observations = _extract_observations(experiment)
     if observations:
         result["observations"] = observations
+
+    # Export candidate arms (unevaluated trials)
+    candidates = _extract_candidates(experiment, gs)
+    if candidates:
+        result["candidates"] = candidates
 
     return result
 

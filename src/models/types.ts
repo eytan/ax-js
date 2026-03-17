@@ -107,6 +107,15 @@ export interface SearchSpaceParam {
   is_ordered?: boolean;
 }
 
+// ── Parameter constraints ─────────────────────────────────────────────────
+
+export interface ParameterConstraint {
+  type: "sum" | "order" | "linear";
+  constraint_dict: Record<string, number>;  // {param_name: weight}
+  bound: number;
+  op: "LEQ" | "GEQ";
+}
+
 // ── Optimization config (objectives + constraints) ────────────────────────
 
 export interface ObjectiveConfig {
@@ -118,12 +127,14 @@ export interface OutcomeConstraintConfig {
   name: string;
   bound: number;
   op: "LEQ" | "GEQ";
+  relative?: boolean;
 }
 
 export interface ObjectiveThresholdConfig {
   name: string;
   bound: number;
   op: "LEQ" | "GEQ";
+  relative?: boolean;
 }
 
 export interface OptimizationConfig {
@@ -158,12 +169,18 @@ export interface Observation {
   arm_name: string;
   parameters: Record<string, number>;
   metrics: Record<string, { mean: number; sem?: number }>;
+  trial_index?: number;
+  trial_status?: string;
+  generation_method?: string;
 }
 
 // ── ExperimentState: shared schema for both exports and fixtures ──────────
 
 export interface ExperimentState {
-  search_space: { parameters: SearchSpaceParam[] };
+  search_space: {
+    parameters: SearchSpaceParam[];
+    parameter_constraints?: ParameterConstraint[];
+  };
   model_state: AnyModelState;
   name?: string;
   description?: string;
@@ -172,6 +189,7 @@ export interface ExperimentState {
   adapter_transforms?: AdapterTransform[];
   optimization_config?: OptimizationConfig;
   observations?: Observation[];
+  candidates?: Candidate[];
 }
 
 // ── Fixture schema: experiment + test expectations ────────────────────────
@@ -208,4 +226,36 @@ export interface Manifest {
 export interface PredictionResult {
   mean: Float64Array;
   variance: Float64Array;
+}
+
+// ── Predictor convenience types ───────────────────────────────────────────
+
+/** Training data for one outcome, in raw parameter space with un-standardized Y. */
+export interface TrainingData {
+  X: number[][];
+  Y: number[];
+  paramNames: string[];
+}
+
+/** Leave-one-out cross-validation result for one outcome. */
+export interface LOOCVResult {
+  observed: number[];   // Y values in original space
+  mean: number[];       // LOO predicted means in original space
+  variance: number[];   // LOO predicted variances in original space
+}
+
+/** Dimension importance derived from kernel lengthscales. */
+export interface DimensionImportance {
+  dimIndex: number;
+  paramName: string;
+  lengthscale: number;
+}
+
+// ── Candidate arms (round-trip workflow) ──────────────────────────────────
+
+export interface Candidate {
+  arm_name?: string;
+  parameters: Record<string, number>;
+  trial_index?: number;
+  generation_method?: string;
 }

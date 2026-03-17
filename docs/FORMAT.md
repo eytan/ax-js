@@ -7,7 +7,10 @@ Used by both `axjs_export.py` (production) and `generate_fixtures.py` (test fixt
 
 ```typescript
 interface ExperimentState {
-  search_space: { parameters: SearchSpaceParam[] };
+  search_space: {
+    parameters: SearchSpaceParam[];
+    parameter_constraints?: ParameterConstraint[];
+  };
   model_state: AnyModelState;
   name?: string;
   description?: string;
@@ -15,12 +18,14 @@ interface ExperimentState {
   status_quo?: { point: number[] };
   adapter_transforms?: AdapterTransform[];
   optimization_config?: OptimizationConfig;
+  observations?: Observation[];
+  candidates?: Candidate[];
 }
 ```
 
 ### `search_space`
 
-Parameter definitions from the Ax experiment:
+Parameter definitions and constraints from the Ax experiment:
 
 ```typescript
 interface SearchSpaceParam {
@@ -34,7 +39,20 @@ interface SearchSpaceParam {
   target_value?: number;
   is_ordered?: boolean;
 }
+
+interface ParameterConstraint {
+  type: "sum" | "order" | "linear";
+  constraint_dict: Record<string, number>;  // {param_name: weight}
+  bound: number;
+  op: "LEQ" | "GEQ";
+}
 ```
+
+`parameter_constraints` is an optional array of `ParameterConstraint`. All Ax
+parameter constraints reduce to the linear form `Σ(w_i * x_i) ≤ bound`:
+- **`order`**: `lower_param - upper_param ≤ 0` (ordering constraint)
+- **`sum`**: `Σ(param_i) ≤ bound` (sum constraint, can be ≤ or ≥)
+- **`linear`**: general weighted linear constraint
 
 ### `model_state`
 
@@ -48,6 +66,11 @@ Discriminated union by `model_type`:
 | `"PairwiseGP"` | `PairwiseGPModelState` | Preference learning (Laplace approx) |
 | `"MultiTaskGP"` | `MultiTaskGPModelState` | Multi-task with ICM kernel |
 | `"EnsembleGP"` | `EnsembleGPModelState` | Ensemble of GPs (SAAS/MAP) |
+
+**Warning: `train_Y` values are NOT in the original data space.** They have been
+transformed by adapter transforms (LogY, StandardizeY, etc.) and then by model-level
+outcome transforms (Standardize). Use `Predictor.getTrainingData()` to get Y values
+in the original space — it applies both layers of untransforms automatically.
 
 ### `outcome_names`
 
@@ -68,7 +91,9 @@ Point values are in raw parameter space (matching `search_space` order).
 
 Transforms applied by Ax's adapter layer **before** data reaches BoTorch.
 These are NOT in `model_state` — they must be applied after GP prediction to
-get results in the original data space.
+get results in the original data space. They also affect `train_Y`: since Ax
+applies these transforms before BoTorch sees the data, `model_state.train_Y`
+is in the post-adapter-transform space, not the original space.
 
 ```typescript
 type AdapterTransform =
@@ -99,11 +124,13 @@ interface OutcomeConstraintConfig {
   name: string;
   bound: number;     // threshold value
   op: "LEQ" | "GEQ"; // ≤ or ≥
+  relative?: boolean; // true if bound is relative to status quo (% change)
 }
 interface ObjectiveThresholdConfig {
   name: string;
   bound: number;     // worst acceptable value (reference point for MOO)
   op: "LEQ" | "GEQ"; // direction: LEQ for minimize objectives, GEQ for maximize
+  relative?: boolean; // true if bound is relative to status quo (% change)
 }
 ```
 
@@ -113,6 +140,34 @@ Single-objective experiments have a single entry.
 `objective_thresholds` define the MOO reference point — the worst acceptable value
 per objective, used for hypervolume computation and Pareto front visualization.
 Used by the radar demo to render objective/constraint axes generically.
+
+### `observations`
+
+Observed trial data from completed experiments:
+
+```typescript
+interface Observation {
+  arm_name: string;
+  parameters: Record<string, number>;
+  metrics: Record<string, { mean: number; sem?: number }>;
+  trial_index?: number;
+  trial_status?: string;    // "COMPLETED" | "CANDIDATE" | "RUNNING" | "ABANDONED"
+  generation_method?: string; // "Sobol" | "BO" | "Manual" etc.
+}
+```
+
+### `candidates`
+
+Unevaluated candidate arms from the generation strategy:
+
+```typescript
+interface Candidate {
+  arm_name?: string;
+  parameters: Record<string, number>;
+  trial_index?: number;
+  generation_method?: string;
+}
+```
 
 ## How Predictor Consumes This Format
 
@@ -128,6 +183,25 @@ The Predictor automatically:
 1. Loads the model from `model_state`
 2. Applies model-level transforms (Normalize, Standardize, Log, etc.)
 3. Applies adapter-level untransforms (LogY, BilogY, etc.) per outcome
+
+### Convenience Methods
+
+```typescript
+// Training data (original-space Y, raw X — both transform layers undone)
+predictor.getTrainingData(outcomeName?) → { X: number[][], Y: number[], paramNames: string[] }
+
+// Analytic LOO-CV (Rasmussen & Williams Eq. 5.12) — no refitting needed
+predictor.loocv(outcomeName?) → { observed: number[], mean: number[], variance: number[] }
+
+// Kernel lengthscales per input dimension
+predictor.getLengthscales(outcomeName?) → number[] | null
+
+// Dimensions ranked by importance (shortest lengthscale first)
+predictor.rankDimensionsByImportance(outcomeName?) → DimensionImportance[]
+
+// Kernel correlation between two points [0, 1]
+predictor.kernelCorrelation(point, refPoint, outcomeName?) → number
+```
 
 ## Fixture Format
 
