@@ -7,15 +7,15 @@ Each inlines the axjs IIFE bundle and default fixture data — no server require
 
 ```
 build_demos.js          # Node.js build script
-├── Shared code blocks
-│   ├── sharedUtilsCode      — normalizeFixture, formatParamValue, computeDimOrder, etc.
-│   └── sharedColormapCode   — viridis(), plasma(), drawColorbar()
-├── Template literals (one per demo)
-│   └── Each produces a self-contained HTML file
-└── writeFileSync × 11
+├── Inlined IIFE bundles
+│   ├── dist/ax.global.js        — window.Ax (Predictor, loadModel, etc.)
+│   └── dist/ax-viz.global.js    — Ax.viz (viridis, drawDataDot, normalizeFixture, etc.)
+├── Per-demo modules (demo/demos/*.js)
+│   └── Each returns a self-contained HTML string
+└── writeFileSync × 10+
 ```
 
-**Data flow**: `test/fixtures/*.json` → `fixtureScript()` embeds as `__DEFAULT_FIXTURE__` → `loadFixtureData()` at runtime → `Predictor.predict()`.
+**Data flow**: `test/fixtures/*.json` → `fixtureScript()` embeds as `__DEFAULT_FIXTURE__` → `Ax.viz.normalizeFixture()` at runtime → `Predictor.predict()`.
 
 ## Demos
 
@@ -103,31 +103,25 @@ build_demos.js          # Node.js build script
 - **Purpose**: Onboarding page for Ax/BoTorch team members
 - **Rendering**: HTML/CSS (no canvas)
 
-## Shared Utilities Reference
+## Shared Visualization Utilities (`Ax.viz`)
 
-### `sharedUtilsCode` (inlined via `sharedUtilsScript()`)
-
-| Function | Purpose |
-|----------|---------|
-| `normalizeFixture(data)` | Unwraps fixture format → flat `{search_space, model_state, metadata, ...}` |
-| `isChoice(p)`, `isInteger(p)` | Parameter type checks |
-| `defaultParamValue(p)` | Center of bounds / first choice value |
-| `formatParamValue(val, p)` | Display formatting |
-| `computeDimOrder(predictor, nDim, outcome)` | Rank dimensions by importance via `predictor.rankDimensionsByImportance()` |
-
-### `sharedColormapCode` (inlined via `sharedColormapScript()`)
+All shared utilities are provided by the `ax-viz.global.js` IIFE bundle, accessed
+via the `Ax.viz.*` namespace. Source: `src/viz/index.ts`.
 
 | Function | Purpose |
 |----------|---------|
-| `viridis(t)` | Viridis colormap (10-stop piecewise linear, t ∈ [0,1]) |
-| `plasma(t)` | Plasma colormap (9-stop piecewise linear) |
-| `drawColorbar(id, cfn)` | Render horizontal colorbar to a canvas element |
-
-### `sharedDotCode` (inlined via `sharedDotScript()`)
-
-| Function | Purpose |
-|----------|---------|
-| `drawDataDot(ctx, x, y, alpha, isActive, isHovered, fillRGB)` | Standard outer-ring + inner-fill data point (used by response_surface, point_proximity, bayesian_optimization, preference_explorer) |
+| `Ax.viz.viridis(t)` | Viridis colormap (t ∈ [0,1] → RGB) |
+| `Ax.viz.plasma(t)` | Plasma colormap (t ∈ [0,1] → RGB) |
+| `Ax.viz.drawColorbar(id, cfn)` | Render horizontal colorbar to a canvas element |
+| `Ax.viz.drawDataDot(ctx, x, y, alpha, isActive, isHovered, fillRGB)` | Standard outer-ring + inner-fill data point |
+| `Ax.viz.normalizeFixture(data)` | Unwraps fixture format → flat `{search_space, model_state, metadata, ...}` |
+| `Ax.viz.isChoice(p)`, `Ax.viz.isInteger(p)` | Parameter type checks |
+| `Ax.viz.defaultParamValue(p)` | Center of bounds / first choice value |
+| `Ax.viz.formatParamValue(val, p)` | Display formatting |
+| `Ax.viz.computeDimOrder(predictor, nDim, outcome)` | Rank dimensions by importance |
+| `Ax.viz.pointRelevance(pt, fixed, plotted, ls, tf, params)` | Kernel-distance relevance between points |
+| `Ax.viz.showTooltip(el, html, x, y)` | Show tooltip at coordinates |
+| `Ax.viz.hideTooltip(el)` | Hide tooltip |
 
 ## Key Visualization Concepts
 
@@ -137,9 +131,10 @@ build_demos.js          # Node.js build script
 
 ## Adding a New Demo
 
-1. Add a template literal to `build_demos.js`: `const myDemo = \`<!DOCTYPE html>...\`;`
-2. Include `${libraryScript()}` and optionally `${sharedUtilsScript()}`, `${sharedColormapScript()}`
-3. For fixture-driven demos: `${fixtureScript('__DEFAULT_FIXTURE__', myFixture)}` + `loadFixtureData(__DEFAULT_FIXTURE__)`
-4. Add `writeFileSync(join(__dirname, 'my_demo.html'), myDemo);`
-5. Add a card to `index.html`
-6. Update this file
+1. Create `demo/demos/my_demo.js` exporting a default function that returns HTML
+2. Include `${libraryScript()}` and `${vizScript()}` for the core + viz bundles
+3. For fixture-driven demos: `${fixtureScript('__DEFAULT_FIXTURE__', myFixture)}` + `Ax.viz.normalizeFixture(__DEFAULT_FIXTURE__)`
+4. Use `Ax.viz.*` for colormaps, dot rendering, and search-space helpers
+5. Register in `demo/build_demos.js`
+6. Add a card to `index.html`
+7. Update this file

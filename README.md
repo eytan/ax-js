@@ -152,6 +152,8 @@ The demo suite includes 10+ self-contained HTML files that work as `file://` URL
 
 Build demos: `npm run build` (requires the library to be built first).
 
+Browse the demos: [demo/](demo/) — clone the repo and open the HTML files directly, or browse on GitHub.
+
 ## Supported Models
 
 | Model | BoTorch Class | Features |
