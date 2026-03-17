@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>axjs Bundle Test</title>
+<style>
+  body { font-family: monospace; background: #111; color: #ccc; padding: 2rem; }
+  .pass { color: #4f4; }
+  .fail { color: #f44; }
+  pre { margin: 4px 0; }
+</style>
+</head>
+<body>
+<h2>axjs IIFE Bundle Test</h2>
+<div id="results"></div>
+
+<!-- Load bundles in order: main first, then sub-namespaces -->
+<script src="../dist/ax.global.js"></script>
+<script src="../dist/ax-acquisition.global.js"></script>
+<script src="../dist/ax-viz.global.js"></script>
+
+<script>
+// Inline the fixture
+var FIXTURE = null;
+</script>
+<!-- Load fixture via fetch since we may be on file:// -->
+<script>
+(async function() {
+  var out = document.getElementById('results');
+  var allPassed = true;
+
+  function check(name, fn) {
+    var line = document.createElement('pre');
+    try {
+      var result = fn();
+      if (result === true) {
+        line.className = 'pass';
+        line.textContent = 'PASS: ' + name;
+      } else {
+        line.className = 'fail';
+        line.textContent = 'FAIL: ' + name + ' => ' + JSON.stringify(result);
+        allPassed = false;
+      }
+    } catch (e) {
+      line.className = 'fail';
+      line.textContent = 'FAIL: ' + name + ' => ' + e.message;
+      allPassed = false;
+    }
+    out.appendChild(line);
+  }
+
+  // --- Namespace checks ---
+  check('window.Ax exists', function() { return typeof window.Ax === 'object'; });
+  check('Ax.Predictor exists', function() { return typeof Ax.Predictor === 'function'; });
+  check('Ax.loadModel exists', function() { return typeof Ax.loadModel === 'function'; });
+  check('Ax.relativize exists', function() { return typeof Ax.relativize === 'function'; });
+
+  check('Ax.acquisition exists', function() { return typeof Ax.acquisition === 'object'; });
+  check('Ax.acquisition.UpperConfidenceBound exists', function() {
+    return typeof Ax.acquisition.UpperConfidenceBound === 'function';
+  });
+  check('Ax.acquisition.ExpectedImprovement exists', function() {
+    return typeof Ax.acquisition.ExpectedImprovement === 'function';
+  });
+
+  check('Ax.viz exists', function() { return typeof Ax.viz === 'object'; });
+  check('Ax.viz.viridis exists', function() { return typeof Ax.viz.viridis === 'function'; });
+  check('Ax.viz.normalizeFixture exists', function() { return typeof Ax.viz.normalizeFixture === 'function'; });
+  check('Ax.viz.plasma exists', function() { return typeof Ax.viz.plasma === 'function'; });
+
+  // --- Functional checks ---
+  check('Ax.viz.viridis(0.5) returns RGB array', function() {
+    var c = Ax.viz.viridis(0.5);
+    return Array.isArray(c) && c.length === 3 && c.every(function(v) { return v >= 0 && v <= 255; });
+  });
+
+  check('Ax.viz.viridis(0.0) returns dark purple', function() {
+    var c = Ax.viz.viridis(0.0);
+    // viridis(0) should be ~[68, 1, 84]
+    return c[0] < 100 && c[1] < 20 && c[2] > 60;
+  });
+
+  check('Ax.viz.viridis(1.0) returns yellow', function() {
+    var c = Ax.viz.viridis(1.0);
+    // viridis(1) should be ~[253, 231, 37]
+    return c[0] > 200 && c[1] > 200 && c[2] < 100;
+  });
+
+  // --- Load fixture and test Predictor ---
+  try {
+    var resp = await fetch('../test/fixtures/branin_matern25.json');
+    FIXTURE = await resp.json();
+  } catch(e) {
+    // If fetch fails (e.g., file:// CORS), try XMLHttpRequest
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '../test/fixtures/branin_matern25.json', false);
+      xhr.send();
+      FIXTURE = JSON.parse(xhr.responseText);
+    } catch(e2) {
+      var line = document.createElement('pre');
+      line.className = 'fail';
+      line.textContent = 'FAIL: Could not load fixture (serve via HTTP): ' + e2.message;
+      out.appendChild(line);
+      allPassed = false;
+    }
+  }
+
+  if (FIXTURE) {
+    check('normalizeFixture returns experiment state', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      return norm && norm.model_state && norm.search_space;
+    });
+
+    check('Predictor constructed from fixture', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      return p.paramNames.length > 0 && p.outcomeNames.length > 0;
+    });
+
+    check('Predictor.paramNames correct', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      return p.paramNames.length === 2;
+    });
+
+    check('Predictor.predict returns results', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      // predict() takes number[][] (positional arrays), not named objects
+      var testPoint = p.paramBounds.map(function(b) { return (b[0] + b[1]) / 2; });
+      var pred = p.predict([testPoint]);
+      var firstOutcome = Object.keys(pred)[0];
+      return pred[firstOutcome].mean.length === 1 && typeof pred[firstOutcome].mean[0] === 'number';
+    });
+
+    check('Predictor.predict variance is positive', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      var testPoint = p.paramBounds.map(function(b) { return (b[0] + b[1]) / 2; });
+      var pred = p.predict([testPoint]);
+      var firstOutcome = Object.keys(pred)[0];
+      return pred[firstOutcome].variance[0] > 0;
+    });
+
+    check('Predictor.getTrainingData returns data', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      var td = p.getTrainingData();
+      return td.X.length > 0 && td.Y.length > 0;
+    });
+
+    check('Predictor.getLengthscales returns array', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      var ls = p.getLengthscales();
+      return Array.isArray(ls) && ls.length === 2 && ls.every(function(v) { return v > 0; });
+    });
+
+    check('Predictor.rankDimensionsByImportance works', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      var ranked = p.rankDimensionsByImportance();
+      return ranked.length === 2 && ranked[0].importance >= ranked[1].importance;
+    });
+
+    check('Predictor.loocv returns LOO-CV results', function() {
+      var norm = Ax.viz.normalizeFixture(FIXTURE);
+      var p = new Ax.Predictor(norm);
+      var cv = p.loocv();
+      return cv.observed.length > 0 && cv.mean.length === cv.observed.length;
+    });
+  }
+
+  // --- No namespace collisions ---
+  check('Ax.acquisition does not clobber Ax.Predictor', function() {
+    return typeof Ax.Predictor === 'function';
+  });
+  check('Ax.viz does not clobber Ax.acquisition', function() {
+    return typeof Ax.acquisition.UpperConfidenceBound === 'function';
+  });
+
+  // --- Summary ---
+  var summary = document.createElement('h3');
+  summary.className = allPassed ? 'pass' : 'fail';
+  summary.textContent = allPassed ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED';
+  summary.id = 'summary';
+  out.appendChild(summary);
+})();
+</script>
+</body>
+</html>
