@@ -9,6 +9,13 @@ export type { PredictionsByOutcome } from "./predictor.js";
 export { loadModel } from "./io/deserialize.js";
 export type { AnyModel } from "./io/deserialize.js";
 
+// Input transform helpers
+export {
+  identityInputTransform,
+  boundsInputTransform,
+} from "./transforms/normalize.js";
+export type { InputTransformState } from "./transforms/normalize.js";
+
 // Relativization
 export {
   relativize,

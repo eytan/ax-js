@@ -8,7 +8,15 @@ import type {
   PredictionResult,
   AdapterTransform,
   Observation,
+  TrainingData,
+  LOOCVResult,
+  DimensionImportance,
+  AnyModelState,
+  GPModelState,
+  KernelState,
+  OutcomeTransformState,
 } from "./models/types.js";
+import { SingleTaskGP } from "./models/single_task.js";
 import {
   LogUntransform,
   BilogUntransform,
@@ -64,6 +72,7 @@ export class Predictor {
       exported.adapter_transforms,
       this.outcomeNames,
     );
+    validateModelState(exported.model_state, this.paramNames.length);
   }
 
   /** Observed trial data, if included in the ExperimentState. */
@@ -181,6 +190,177 @@ export class Predictor {
     return undefined;
   }
 
+  /**
+   * Get training data for an outcome, with Y un-standardized to raw space.
+   *
+   * @example
+   * ```ts
+   * const { X, Y, paramNames } = predictor.getTrainingData("accuracy");
+   * // X[i] is the i-th training point in raw parameter space
+   * // Y[i] is the un-standardized observed value
+   * ```
+   */
+  getTrainingData(outcomeName?: string): TrainingData {
+    const name = outcomeName ?? this.outcomeNames[0];
+    const ms = this._state.model_state;
+    const sub = getSubModel(ms, this.outcomeNames, name);
+    const trainX = sub.train_X;
+    const trainY = sub.train_Y;
+    if (!trainX || !trainY) {
+      return { X: [], Y: [], paramNames: this.paramNames };
+    }
+    const Y = this.untransformTrainY(name, trainY, sub);
+    return { X: trainX.map((row) => row.slice()), Y, paramNames: this.paramNames };
+  }
+
+  /**
+   * Analytic Leave-One-Out Cross-Validation (Rasmussen & Williams, Eq. 5.12).
+   *
+   * Returns LOO predictions and observed values in the original data space,
+   * with both model-level and adapter-level untransforms applied.
+   * No refitting required — computed analytically from the full GP.
+   *
+   * Supported for SingleTaskGP and ModelListGP. Throws for other model types.
+   *
+   * @example
+   * ```ts
+   * const loo = predictor.loocv("accuracy");
+   * // loo.observed[i] — actual value for training point i
+   * // loo.mean[i] — LOO predicted mean (point i held out)
+   * // loo.variance[i] — LOO predicted variance
+   * ```
+   */
+  loocv(outcomeName?: string): LOOCVResult {
+    const name = outcomeName ?? this.outcomeNames[0];
+    const td = this.getTrainingData(name);
+
+    let looPred: PredictionResult;
+    if (this.model instanceof ModelListGP) {
+      const idx = this.outcomeNames.indexOf(name);
+      if (idx < 0) throw new Error(`Unknown outcome: ${name}`);
+      looPred = this.model.loocvPredictions()[idx];
+    } else if (this.model instanceof SingleTaskGP) {
+      looPred = this.model.loocvPredictions();
+    } else {
+      throw new Error(
+        `loocv() is only supported for SingleTaskGP and ModelListGP, got ${this._state.model_state.model_type}`,
+      );
+    }
+
+    // Apply adapter untransforms (same as predict())
+    looPred = this.applyAdapterUntransform(name, looPred);
+
+    return {
+      observed: td.Y,
+      mean: Array.from(looPred.mean),
+      variance: Array.from(looPred.variance),
+    };
+  }
+
+  /**
+   * Returns null if no lengthscales are found (e.g., constant kernel).
+   *
+   * @example
+   * ```ts
+   * const ls = predictor.getLengthscales("loss");
+   * // ls = [0.3, 1.2, 0.05] — one per input dimension
+   * ```
+   */
+  getLengthscales(outcomeName?: string): number[] | null {
+    const name = outcomeName ?? this.outcomeNames[0];
+    const ms = this._state.model_state;
+    const sub = getSubModel(ms, this.outcomeNames, name);
+    return findLengthscales(sub.kernel ?? (sub as any).data_kernel);
+  }
+
+  /**
+   * Rank input dimensions by importance (shorter lengthscale = more important).
+   * Returns dimensions sorted from most to least important.
+   *
+   * @example
+   * ```ts
+   * const dims = predictor.rankDimensionsByImportance("accuracy");
+   * // dims[0] = { dimIndex: 2, paramName: "lr", lengthscale: 0.05 }
+   * ```
+   */
+  rankDimensionsByImportance(outcomeName?: string): DimensionImportance[] {
+    const ls = this.getLengthscales(outcomeName);
+    if (!ls) return [];
+    const dims: DimensionImportance[] = ls.map((l, i) => ({
+      dimIndex: i,
+      paramName: this.paramNames[i] ?? `x${i}`,
+      lengthscale: l,
+    }));
+    dims.sort((a, b) => a.lengthscale - b.lengthscale);
+    return dims;
+  }
+
+  /**
+   * Compute kernel correlation between two points for an outcome.
+   * Returns a value in [0, 1] where 1 means identical and 0 means far apart.
+   * Uses the RBF/Matern-style `exp(-0.5 * Σ((x_j - ref_j) / (coeff_j * ls_j))²)`.
+   * Choice parameters use a penalty of 4.0 for mismatches.
+   *
+   * @example
+   * ```ts
+   * const corr = predictor.kernelCorrelation([1, 2, 3], [1, 2, 4], "loss");
+   * // corr ≈ 0.87 — high correlation, differ only in dim 2
+   * ```
+   */
+  kernelCorrelation(
+    point: number[],
+    refPoint: number[],
+    outcomeName?: string,
+  ): number {
+    const name = outcomeName ?? this.outcomeNames[0];
+    const ms = this._state.model_state;
+    const sub = getSubModel(ms, this.outcomeNames, name);
+    const ls = findLengthscales(sub.kernel ?? (sub as any).data_kernel);
+    const inputTf = (sub as GPModelState).input_transform;
+    const params = this.paramSpecs;
+
+    let d2 = 0;
+    for (let j = 0; j < point.length; j++) {
+      if (params[j] && params[j].type === "choice") {
+        if (point[j] !== refPoint[j]) d2 += 4.0;
+        continue;
+      }
+      const diff = point[j] - refPoint[j];
+      const coeff = inputTf?.coefficient?.[j] ?? 1;
+      const lsj = ls && j < ls.length ? ls[j] : 1;
+      const scaled = diff / coeff / lsj;
+      d2 += scaled * scaled;
+    }
+    return Math.exp(-0.5 * d2);
+  }
+
+  /**
+   * Untransform raw train_Y to original data space.
+   *
+   * IMPORTANT: model_state.train_Y is NOT in the original data space.
+   * It has been transformed by TWO layers:
+   *   1. Adapter transforms (LogY, StandardizeY, etc.) — applied by Ax before BoTorch
+   *   2. Model-level outcome transforms (Standardize, Log, etc.) — within BoTorch
+   *
+   * This method reverses BOTH layers. Any new method that needs original-space
+   * Y values MUST use this — never read train_Y directly.
+   */
+  private untransformTrainY(
+    outcomeName: string,
+    trainY: number[],
+    subModel: { outcome_transform?: OutcomeTransformState; [k: string]: any },
+  ): number[] {
+    // Layer 2 (innermost): undo model-level outcome transform
+    const outTf = (subModel as GPModelState).outcome_transform;
+    let Y = unstandardizeY(trainY, outTf);
+    // Layer 1 (outermost): undo adapter-level transforms
+    const adapterUt = this.adapterUntransforms?.get(outcomeName);
+    if (adapterUt) {
+      Y = Y.map((y) => adapterUt.untransform(y, 0).mean);
+    }
+    return Y;
+  }
+
   private applyAdapterUntransform(
     outcomeName: string,
     result: PredictionResult,
@@ -287,4 +467,98 @@ function buildAdapterUntransforms(
   }
 
   return map.size > 0 ? map : null;
+}
+
+// ── Predictor helper functions ────────────────────────────────────────────
+
+/** Get the sub-model state for a specific outcome. */
+function getSubModel(
+  ms: AnyModelState,
+  outcomeNames: string[],
+  outcomeName: string,
+): { train_X?: number[][]; train_Y?: number[]; kernel?: KernelState; [k: string]: any } {
+  if (ms.model_type === "ModelListGP") {
+    const idx = outcomeNames.indexOf(outcomeName);
+    return ms.models[Math.max(0, idx)];
+  }
+  return ms;
+}
+
+/** Recursively find lengthscale array in a kernel tree. */
+function findLengthscales(k: KernelState | undefined): number[] | null {
+  if (!k) return null;
+  if (k.lengthscale) return k.lengthscale;
+  if (k.base_kernel) return findLengthscales(k.base_kernel);
+  if (k.kernels) {
+    for (const sub of k.kernels) {
+      const r = findLengthscales(sub);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+/** Un-standardize Y values using the outcome transform mean/std. */
+function unstandardizeY(
+  trainY: number[],
+  outTf: OutcomeTransformState | undefined,
+): number[] {
+  if (!outTf) return trainY.slice();
+  // Only un-standardize if it's a Standardize transform (has mean/std)
+  if ("mean" in outTf && outTf.mean !== undefined && "std" in outTf) {
+    return trainY.map((y) => outTf.mean + outTf.std * y);
+  }
+  return trainY.slice();
+}
+
+/* global console */
+declare const console: { warn(...args: unknown[]): void };
+
+/**
+ * Validate model state consistency. Emits console.warn for common errors
+ * that silently produce wrong predictions.
+ */
+function validateModelState(state: AnyModelState, numParams: number): void {
+  const models: GPModelState[] = [];
+  if (state.model_type === "ModelListGP" && "models" in state) {
+    models.push(...state.models);
+  } else if (
+    state.model_type === "SingleTaskGP" ||
+    state.model_type === "FixedNoiseGP"
+  ) {
+    models.push(state as GPModelState);
+  }
+  // EnsembleGP, PairwiseGP, MultiTaskGP: skip detailed validation for now
+
+  for (let idx = 0; idx < models.length; idx++) {
+    const m = models[idx];
+    const prefix =
+      models.length > 1 ? `[axjs] model ${idx}: ` : "[axjs] ";
+
+    // Check input_transform dimensions
+    if (m.input_transform) {
+      const d = m.train_X[0]?.length ?? 0;
+      if (m.input_transform.offset.length !== d) {
+        console.warn(
+          `${prefix}input_transform.offset has ${m.input_transform.offset.length} dims but train_X has ${d} cols`,
+        );
+      }
+    }
+
+    // Check train_Y standardization when Standardize is active
+    if (m.outcome_transform && "mean" in m.outcome_transform && m.train_Y.length > 1) {
+      const yMean =
+        m.train_Y.reduce((a, b) => a + b, 0) / m.train_Y.length;
+      if (Math.abs(yMean) > 5) {
+        console.warn(
+          `${prefix}train_Y mean is ${yMean.toFixed(2)} but outcome_transform is Standardize — train_Y should be pre-standardized (near 0). Did you pass raw Y values?`,
+        );
+      }
+    }
+
+    // Check noise_variance is positive
+    if (typeof m.noise_variance === "number" && m.noise_variance <= 0) {
+      console.warn(`${prefix}noise_variance is ${m.noise_variance} (should be positive)`);
+    }
+  }
 }

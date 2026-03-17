@@ -21,6 +21,13 @@
  */
 export interface OutcomeUntransform {
   untransform(mu: number, variance: number): { mean: number; variance: number };
+  /**
+   * Scale a covariance value from transformed space to original space.
+   * For linear transforms (Standardize): cov_orig = std² * cov_transformed.
+   * For nonlinear transforms: returns raw GP covariance (no scaling applied),
+   * since exact covariance untransform requires the full joint distribution.
+   */
+  untransformCovariance(cov: number): number;
 }
 
 /**
@@ -44,6 +51,10 @@ export class StandardizeUntransform implements OutcomeUntransform {
       variance: this.std * this.std * variance,
     };
   }
+
+  untransformCovariance(cov: number): number {
+    return this.std * this.std * cov;
+  }
 }
 
 /**
@@ -63,6 +74,10 @@ export class LogUntransform implements OutcomeUntransform {
       mean: Math.exp(mu + variance / 2),
       variance: Math.expm1(variance) * Math.exp(2 * mu + variance),
     };
+  }
+
+  untransformCovariance(cov: number): number {
+    return cov; // Nonlinear — no exact covariance scaling
   }
 }
 
@@ -84,6 +99,10 @@ export class BilogUntransform implements OutcomeUntransform {
       mean: mu >= 0 ? Math.exp(mu) - 1 : -(Math.exp(-mu) - 1),
       variance: deriv * deriv * variance,
     };
+  }
+
+  untransformCovariance(cov: number): number {
+    return cov; // Nonlinear — no exact covariance scaling
   }
 }
 
@@ -149,6 +168,10 @@ export class PowerUntransform implements OutcomeUntransform {
     };
   }
 
+  untransformCovariance(cov: number): number {
+    return cov; // Nonlinear — no exact covariance scaling
+  }
+
   private _inverseYeoJohnson(z: number): number {
     const lam = this.power;
     if (z >= 0) {
@@ -190,6 +213,14 @@ export class ChainedOutcomeUntransform implements OutcomeUntransform {
     let result = { mean: mu, variance };
     for (const tf of this.transforms) {
       result = tf.untransform(result.mean, result.variance);
+    }
+    return result;
+  }
+
+  untransformCovariance(cov: number): number {
+    let result = cov;
+    for (const tf of this.transforms) {
+      result = tf.untransformCovariance(result);
     }
     return result;
   }

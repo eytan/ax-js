@@ -142,7 +142,62 @@ export class ExactGP {
   }
 
   /**
-   * Compute posterior covariance between each test point and a reference point.
+   * Analytic Leave-One-Out Cross-Validation predictions (Rasmussen & Williams, Eq. 5.12).
+   *
+   * LOO mean:     μ_LOO(i) = y_i - α_i / [K⁻¹]_ii
+   * LOO variance: σ²_LOO(i) = 1 / [K⁻¹]_ii
+   *
+   * where α = K⁻¹(y - m(X)) and K = K(X,X) + σ²I.
+   * No refitting required — computed from the full GP's Cholesky factor.
+   *
+   * Returns predictions in model-internal space (before outcome untransform).
+   * Caller (Predictor) is responsible for applying outcome + adapter untransforms.
+   */
+  loocvPredictions(trainY: Matrix): PredictionResult {
+    const n = this.L.rows;
+
+    // Compute diag(K⁻¹) = diag(L⁻ᵀ L⁻¹).
+    // For each column i of L⁻¹ (= forward solve of L with e_i),
+    // [K⁻¹]_ii = ||L⁻¹[:,i]||².
+    // We solve one column at a time to avoid storing the full inverse.
+    const diagKinv = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      // Forward-solve L * x = e_i
+      const x = new Float64Array(n);
+      for (let row = 0; row < n; row++) {
+        let s = row === i ? 1.0 : 0.0;
+        for (let j = 0; j < row; j++) {
+          s -= this.L.get(row, j) * x[j];
+        }
+        x[row] = s / this.L.get(row, row);
+      }
+      let sumSq = 0;
+      for (let j = 0; j < n; j++) sumSq += x[j] * x[j];
+      diagKinv[i] = sumSq;
+    }
+
+    // LOO predictions
+    const mean = new Float64Array(n);
+    const variance = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const yi = trainY.get(i, 0);
+      mean[i] = yi - this.alpha.get(i, 0) / diagKinv[i];
+      variance[i] = Math.max(0, 1.0 / diagKinv[i]);
+    }
+
+    // Apply outcome untransform (same as predict())
+    if (this.outcomeTransform) {
+      for (let i = 0; i < n; i++) {
+        const ut = this.outcomeTransform.untransform(mean[i], variance[i]);
+        mean[i] = ut.mean;
+        variance[i] = ut.variance;
+      }
+    }
+
+    return { mean, variance };
+  }
+
+  /**
    *
    * Cov(f(x_i), f(x_ref)) = k(x_i, x_ref) - v_i · v_ref
    * where v = L⁻¹ @ k(X, x)
@@ -178,19 +233,11 @@ export class ExactGP {
       covariance[i] = Ktr.get(i, 0) - vDot;
     }
 
-    // Scale by outcome transform if Standardize (linear)
+    // Scale covariance by outcome transform
     if (this.outcomeTransform) {
-      // For StandardizeUntransform, covariance scales by std²
-      // We detect this via duck typing to avoid import cycle
-      const tf = this.outcomeTransform as any;
-      if (typeof tf.std === "number") {
-        const s2 = tf.std * tf.std;
-        for (let i = 0; i < n; i++) {
-          covariance[i] *= s2;
-        }
+      for (let i = 0; i < n; i++) {
+        covariance[i] = this.outcomeTransform.untransformCovariance(covariance[i]);
       }
-      // For nonlinear transforms, covariance in original space is approximate.
-      // The caller can use delta method if needed.
     }
 
     return covariance;

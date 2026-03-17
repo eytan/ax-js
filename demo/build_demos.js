@@ -42,30 +42,10 @@ function formatParamValue(val, p) {
   if (isInteger(p)) return String(Math.round(val));
   return val.toFixed(3);
 }
-function findLS(k) {
-  if (!k) return null;
-  if (k.lengthscale) return k.lengthscale;
-  if (k.base_kernel) return findLS(k.base_kernel);
-  if (k.kernels) { for (var i=0;i<k.kernels.length;i++) { var r=findLS(k.kernels[i]); if(r) return r; } }
-  return null;
-}
-function extractLengthscales(ms) {
-  if (ms.model_type==='ModelListGP') return findLS(ms.models[0].kernel);
-  return findLS(ms.kernel || ms.data_kernel);
-}
-function rankDims(ms, outcomeNames, selectedOutcome) {
-  var subModel = (outcomeNames && selectedOutcome)
-    ? getModelForOutcome(ms, outcomeNames, selectedOutcome) : ms;
-  var ls = findLS(subModel.kernel || subModel.data_kernel);
-  if (!ls) return null;
-  var idx = ls.map(function(_,i){return i;});
-  idx.sort(function(a,b){return ls[a]-ls[b];});
-  return idx;
-}
-function computeDimOrder(ms, nDim, outcomeNames, selectedOutcome) {
-  var ranked = rankDims(ms, outcomeNames, selectedOutcome);
-  if (!ranked) return Array.from({length:nDim}, function(_,i){return i;});
-  var order = ranked.slice();
+function computeDimOrder(predictor, nDim, selectedOutcome) {
+  var ranked = predictor.rankDimensionsByImportance(selectedOutcome);
+  if (!ranked || ranked.length === 0) return Array.from({length:nDim}, function(_,i){return i;});
+  var order = ranked.map(function(d){return d.dimIndex;});
   if (order.length < nDim) {
     var inRanked = new Set(order);
     for (var di = 0; di < nDim; di++) {
@@ -74,23 +54,23 @@ function computeDimOrder(ms, nDim, outcomeNames, selectedOutcome) {
   }
   return order;
 }
-function closestToCenter(ms, bounds, params) {
-  var trainX = ms.model_type==='ModelListGP' ? ms.models[0].train_X : ms.train_X;
-  if (!trainX || trainX.length===0) return null;
-  var center = bounds.map(function(b, i){
-    if (params && params[i]) {
-      if (isChoice(params[i])) { var v = params[i].values; return v[Math.floor(v.length/2)]; }
-      if (isInteger(params[i])) return Math.round((b[0]+b[1])/2);
+// Kernel-distance relevance between two points (for neighbor highlighting).
+// Returns exp(-0.5*d²) where d² is scaled squared distance.
+function pointRelevance(pt, fixedValues, plottedDims, ls, inputTf, params) {
+  var d2 = 0;
+  for (var j = 0; j < fixedValues.length; j++) {
+    if (plottedDims.indexOf(j) >= 0) continue;
+    if (params && params[j] && isChoice(params[j])) {
+      if (pt[j] !== fixedValues[j]) d2 += 4;
+      continue;
     }
-    return (b[0]+b[1])/2;
-  });
-  var best=0, bestD=Infinity;
-  trainX.forEach(function(pt,i){
-    var d=0;
-    for(var j=0;j<center.length;j++){var rng=bounds[j][1]-bounds[j][0]||1; d+=Math.pow((pt[j]-center[j])/rng,2);}
-    if(d<bestD){bestD=d;best=i;}
-  });
-  return trainX[best].slice();
+    var diff = pt[j] - fixedValues[j];
+    var coeff = (inputTf && inputTf.coefficient) ? inputTf.coefficient[j] : 1;
+    var lsj = (ls && j < ls.length) ? ls[j] : 1;
+    var scaled = diff / coeff / lsj;
+    d2 += scaled * scaled;
+  }
+  return Math.exp(-0.5 * d2);
 }
 function normalizeFixture(data) {
   if (data.experiment) {
@@ -111,18 +91,6 @@ function normalizeFixture(data) {
   }
   return data;
 }
-function getTrainData(ms, outcomeNames, selectedOutcome) {
-  var outIdx = outcomeNames.indexOf(selectedOutcome);
-  var tX = ms.model_type === 'ModelListGP' ? ms.models[outIdx].train_X : ms.train_X;
-  var tY = ms.model_type === 'ModelListGP' ? ms.models[outIdx].train_Y : ms.train_Y;
-  var outTf = ms.model_type === 'ModelListGP'
-    ? ms.models[outIdx].outcome_transform : ms.outcome_transform;
-  return { trainX: tX, trainY: tY, outTf: outTf };
-}
-function untransformY(yVal, outTf) {
-  if (outTf && outTf.mean !== undefined) return outTf.mean + outTf.std * yVal;
-  return yVal;
-}
 function showTooltip(tt, html, ex, ey) {
   tt.innerHTML = html;
   tt.style.display = 'block';
@@ -130,41 +98,15 @@ function showTooltip(tt, html, ex, ey) {
   tt.style.top = (ey - 10) + 'px';
 }
 function hideTooltip(tt) { tt.style.display = 'none'; }
-
-// Get lengthscales and input_transform for a specific outcome
-function getModelForOutcome(ms, outcomeNames, selectedOutcome) {
-  if (ms.model_type === 'ModelListGP') {
-    return ms.models[outcomeNames.indexOf(selectedOutcome)];
-  }
-  return ms;
-}
-
-// Compute kernel-distance-based relevance of a training point to the current slice.
-// Returns exp(-d^2) where d^2 is the squared scaled distance over specified dims.
-// Uses steeper decay than RBF (exp(-d²) vs exp(-0.5d²)) so that only genuinely
-// on-slice points appear bright — prevents misleading bright dots off the GP curve.
-// plottedDims: array of dimension indices being plotted (excluded from distance)
-function pointRelevance(pt, fixedValues, plottedDims, ls, inputTf, params) {
-  var d2 = 0;
-  for (var j = 0; j < fixedValues.length; j++) {
-    if (plottedDims.indexOf(j) >= 0) continue;
-    if (params && params[j] && isChoice(params[j])) {
-      if (pt[j] !== fixedValues[j]) d2 += 4;
-      continue;
-    }
-    var diff = pt[j] - fixedValues[j];
-    var coeff = (inputTf && inputTf.coefficient) ? inputTf.coefficient[j] : 1;
-    var lsj = (ls && j < ls.length) ? ls[j] : 1;
-    var scaled = diff * coeff / lsj;
-    d2 += scaled * scaled;
-  }
-  return Math.exp(-d2);
-}
 `;
 
 function sharedUtilsScript() {
   return `<script>\n${sharedUtilsCode}\n</script>`;
 }
+
+// Inline Ax logo SVG (white wireframe, links back to index)
+const axIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="22" height="22" style="vertical-align:-3px;margin-right:8px;opacity:0.7"><path fill="#fff" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg>`;
+const axHomeLink = `<a href="index.html" style="text-decoration:none">${axIconSvg}</a>`;
 
 // Shared colormap functions used by response_surface and point_proximity
 const sharedColormapCode = `
@@ -267,13 +209,12 @@ const slicePlot = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>Ax-Style 1D Slice Plots</h1>
+<h1>${axHomeLink}Ax-Style 1D Slice Plots</h1>
 <p class="subtitle" id="subtitle">Load a fixture JSON to visualize GP posterior slices</p>
 
 <div class="controls">
   <label>Fixture: <input type="file" id="fileInput" accept=".json"></label>
   <label>Outcome: <select id="outcomeSelect"><option value="0">y0</option></select></label>
-  <label style="margin-left:6px"><input type="checkbox" id="cbNearby" checked> nearby points only</label>
 </div>
 
 <div id="plots"><div class="no-data">Loading...</div></div>
@@ -297,6 +238,7 @@ var fixedValues = [];
 var selectedOutcome = '';
 var globalYRange = {}; // per-outcome { min, max } for stable y-axis
 var dimOrder = []; // dims sorted by importance (smallest lengthscale first)
+var slicePinnedIdx = -1; // persists across renderPlots() calls
 
 var plotsDiv = document.getElementById('plots');
 var slidersDiv = document.getElementById('sliders');
@@ -328,10 +270,9 @@ function precomputeYRange() {
       if (upper > hi) hi = upper;
     }
     // Also include training Y values
-    var td = getTrainData(fixture.model_state, predictor.outcomeNames, name);
-    if (td.trainY) {
-      td.trainY.forEach(function(y) {
-        var yv = untransformY(Array.isArray(y) ? y[0] : y, td.outTf);
+    var td = predictor.getTrainingData(name);
+    if (td.Y) {
+      td.Y.forEach(function(yv) {
         if (yv < lo) lo = yv;
         if (yv > hi) hi = yv;
       });
@@ -343,16 +284,13 @@ function precomputeYRange() {
 
 function loadFixtureData(data) {
   fixture = normalizeFixture(data);
-  predictor = new Predictor({
-    search_space: fixture.search_space,
-    model_state: fixture.model_state
-  });
+  predictor = new Predictor(fixture);
 
   params = fixture.search_space.parameters;
   paramNames = predictor.paramNames;
   paramBounds = predictor.paramBounds;
-  fixedValues = closestToCenter(fixture.model_state, paramBounds, params)
-    || params.map(function(p) { return defaultParamValue(p); });
+  var _td = predictor.getTrainingData();
+  fixedValues = _td.X.length > 0 ? _td.X[0].slice() : params.map(function(p) { return defaultParamValue(p); });
 
   outcomeSelect.innerHTML = '';
   predictor.outcomeNames.forEach(function(name) {
@@ -370,8 +308,7 @@ function loadFixtureData(data) {
 }
 
 function updateDimOrder() {
-  dimOrder = computeDimOrder(fixture.model_state, paramNames.length,
-    predictor.outcomeNames, selectedOutcome);
+  dimOrder = computeDimOrder(predictor, paramNames.length, selectedOutcome);
   buildSliders();
   renderPlots();
 }
@@ -385,12 +322,6 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
 outcomeSelect.addEventListener('change', function() {
   selectedOutcome = outcomeSelect.value;
   updateDimOrder();
-});
-
-var nearbyOnly = true;
-document.getElementById('cbNearby').addEventListener('change', function() {
-  nearbyOnly = this.checked;
-  renderPlots();
 });
 
 function buildSliders() {
@@ -559,17 +490,11 @@ function renderPlots() {
     }
 
     // Training points with kernel-distance-based opacity
-    var td = getTrainData(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-    var subModel = getModelForOutcome(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-    var ptLS = findLS(subModel.kernel || subModel.data_kernel);
-    var ptTf = subModel.input_transform;
+    var td = predictor.getTrainingData(selectedOutcome);
     var visiblePts = []; // track screen coords, data, and SVG refs for hover/click
-    if (td.trainX) {
-      td.trainX.forEach(function(pt, idx) {
-        var alpha = pointRelevance(pt, fixedValues, [dim], ptLS, ptTf, params);
-        if (nearbyOnly && alpha < 0.03) return;
-        var fillAlpha = nearbyOnly ? Math.max(0.10, Math.min(0.85, alpha)) : 0.85;
-        var yVal = untransformY(Array.isArray(td.trainY[idx]) ? td.trainY[idx][0] : td.trainY[idx], td.outTf);
+    if (td.X.length > 0) {
+      td.X.forEach(function(pt, idx) {
+        var yVal = td.Y[idx];
         var ptScreenX;
         if (dimIsChoice) {
           var ci = xs.indexOf(pt[dim]);
@@ -590,12 +515,11 @@ function renderPlots() {
           var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
           dot.setAttribute('cx', ptScreenX); dot.setAttribute('cy', ptScreenY);
           dot.setAttribute('r', '3');
-          dot.setAttribute('fill', 'rgba(255,80,80,' + fillAlpha.toFixed(3) + ')');
+          dot.setAttribute('fill', 'rgba(255,80,80,0.85)');
           dot.setAttribute('stroke', 'rgba(255,255,255,0.5)');
           dot.setAttribute('stroke-width', '1');
           svg.appendChild(dot);
-          visiblePts.push({ cx: ptScreenX, cy: ptScreenY, idx: idx, pt: pt, yVal: yVal,
-            alpha: alpha, fillAlpha: fillAlpha, dot: dot });
+          visiblePts.push({ cx: ptScreenX, cy: ptScreenY, idx: idx, pt: pt, yVal: yVal, dot: dot });
         }
       });
     }
@@ -657,10 +581,18 @@ function renderPlots() {
     container.appendChild(svg);
 
     // Attach hover/click to the container div
-    (function(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, ptLS, ptTf, dimParam, dimIsChoice) {
+    (function(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, dimParam, dimIsChoice) {
       var HOVER_R = 10; // pixel radius for point hit detection
-      var pinnedIdx = -1; // index into visiblePts, -1 = none
       var hoverHighlight = false;
+
+      // Resolve slicePinnedIdx (training point index) → visiblePts index
+      function pinnedVpIdx() {
+        if (slicePinnedIdx < 0) return -1;
+        for (var i = 0; i < visiblePts.length; i++) {
+          if (visiblePts[i].idx === slicePinnedIdx) return i;
+        }
+        return -1;
+      }
 
       function findHit(px, py) {
         for (var pi = 0; pi < visiblePts.length; pi++) {
@@ -675,16 +607,14 @@ function renderPlots() {
       // bright regardless of dimensionality. Uses (raw/max)^0.5 for gentle decay.
       function highlightNeighbors(activeVpIdx) {
         var active = visiblePts[activeVpIdx];
-        // First pass: compute raw relevances and find max
         var rawRels = [];
         var maxRel = 0;
         for (var i = 0; i < visiblePts.length; i++) {
           if (i === activeVpIdx) { rawRels.push(1); continue; }
-          var r = pointRelevance(visiblePts[i].pt, active.pt, [], ptLS, ptTf, params);
+          var r = predictor.kernelCorrelation(visiblePts[i].pt, active.pt, selectedOutcome);
           rawRels.push(r);
           if (r > maxRel) maxRel = r;
         }
-        // Second pass: render with relative scaling
         for (var i = 0; i < visiblePts.length; i++) {
           var vp = visiblePts[i];
           if (i === activeVpIdx) {
@@ -703,22 +633,24 @@ function renderPlots() {
         }
       }
 
-      // Revert all dots to slice-based opacity
       function clearHighlight() {
         for (var i = 0; i < visiblePts.length; i++) {
           var vp = visiblePts[i];
-          vp.dot.setAttribute('fill', 'rgba(255,80,80,' + vp.fillAlpha.toFixed(3) + ')');
+          vp.dot.setAttribute('fill', 'rgba(255,80,80,0.85)');
           vp.dot.setAttribute('stroke', 'rgba(255,255,255,0.5)');
           vp.dot.setAttribute('stroke-width', '1');
           vp.dot.setAttribute('r', '3');
         }
       }
 
+      // Restore highlight after re-render if a point was pinned
+      var pvIdx = pinnedVpIdx();
+      if (pvIdx >= 0) highlightNeighbors(pvIdx);
+
       container.addEventListener('mousemove', function(e) {
         var rect = container.getBoundingClientRect();
         var px = e.clientX - rect.left;
         var py = e.clientY - rect.top;
-        // Outside plot area
         if (px < pad.left || px > pad.left + pw) {
           hoverLine.style.display = 'none';
           hoverDot.style.display = 'none';
@@ -730,13 +662,11 @@ function renderPlots() {
 
         if (hitVpIdx >= 0) {
           var hitPt = visiblePts[hitVpIdx];
-          // Training point tooltip
           hoverLine.style.display = 'none';
           hoverDot.style.display = 'none';
           container.style.cursor = 'pointer';
 
-          // Highlight neighbors on hover (only if nothing is pinned)
-          if (pinnedIdx === -1) {
+          if (slicePinnedIdx === -1) {
             highlightNeighbors(hitVpIdx);
             hoverHighlight = true;
           }
@@ -745,14 +675,11 @@ function renderPlots() {
             '<span class="tt-val">y = ' + hitPt.yVal.toFixed(4) + '</span><br>' +
             paramNames.map(function(name, j) {
               return '<span class="tt-coord">' + name + '</span> = ' + formatParamValue(hitPt.pt[j], params[j]);
-            }).join('<br>') +
-            '<br>relevance: ' + (hitPt.alpha * 100).toFixed(0) + '%';
+            }).join('<br>');
           showTooltip(tooltip, html, e.clientX, e.clientY);
         } else {
-          // Curve tooltip
           container.style.cursor = 'crosshair';
-          // Clear hover highlight if not pinned
-          if (pinnedIdx === -1 && hoverHighlight) {
+          if (slicePinnedIdx === -1 && hoverHighlight) {
             clearHighlight();
             hoverHighlight = false;
           }
@@ -791,23 +718,21 @@ function renderPlots() {
         var hitVpIdx = findHit(px, py);
 
         if (hitVpIdx >= 0) {
-          if (pinnedIdx === hitVpIdx) {
-            // Click same point: unpin
-            pinnedIdx = -1;
+          var hitTrainIdx = visiblePts[hitVpIdx].idx;
+          if (slicePinnedIdx === hitTrainIdx) {
+            slicePinnedIdx = -1;
             clearHighlight();
           } else {
-            // Pin to this point and snap sliders to its coordinates
-            pinnedIdx = hitVpIdx;
+            slicePinnedIdx = hitTrainIdx;
             var clickedPt = visiblePts[hitVpIdx].pt;
             for (var j = 0; j < fixedValues.length; j++) fixedValues[j] = clickedPt[j];
             buildSliders();
             renderPlots();
-            return; // renderPlots rebuilds everything including highlights
+            return;
           }
         } else {
-          // Click empty space: unpin
-          if (pinnedIdx >= 0) {
-            pinnedIdx = -1;
+          if (slicePinnedIdx >= 0) {
+            slicePinnedIdx = -1;
             clearHighlight();
           }
         }
@@ -819,13 +744,12 @@ function renderPlots() {
         hoverDot.style.display = 'none';
         container.style.cursor = 'crosshair';
         hideTooltip(tooltip);
-        // Clear hover highlight, but keep pinned
-        if (pinnedIdx === -1 && hoverHighlight) {
+        if (slicePinnedIdx === -1 && hoverHighlight) {
           clearHighlight();
           hoverHighlight = false;
         }
       });
-    })(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, ptLS, ptTf, dimParam, dimIsChoice);
+    })(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, dimParam, dimIsChoice);
 
     plotsDiv.appendChild(container);
   }
@@ -912,7 +836,7 @@ const responseSurface = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>2D Response Surface</h1>
+<h1>${axHomeLink}2D Response Surface</h1>
 <p class="subtitle" id="subtitle">Load a fixture JSON to visualize GP posterior</p>
 
 <div class="controls">
@@ -921,7 +845,6 @@ const responseSurface = `<!DOCTYPE html>
   <label>Y axis <select id="selY"></select></label>
   <label>Outcome: <select id="outcomeSelect"><option value="0">y</option></select></label>
   <label style="margin-left:6px"><input type="checkbox" id="cbContour" checked> contours</label>
-  <label style="margin-left:6px"><input type="checkbox" id="cbNearby" checked> nearby points only</label>
 </div>
 
 <div id="tooltip"><div class="tt-title" id="tt-title"></div><div id="tt-body"></div></div>
@@ -930,8 +853,8 @@ const responseSurface = `<!DOCTYPE html>
   <div class="plot">
     <div class="plot-title">posterior mean</div>
     <div class="canvas-wrap">
-      <canvas id="cvM" class="main" width="320" height="320"></canvas>
-      <canvas id="ovM" class="overlay" width="320" height="320"></canvas>
+      <canvas id="cvM" class="main" width="368" height="358"></canvas>
+      <canvas id="ovM" class="overlay" width="368" height="358"></canvas>
     </div>
     <div class="cbrow">
       <span class="cblbl" id="mlo">—</span>
@@ -942,8 +865,8 @@ const responseSurface = `<!DOCTYPE html>
   <div class="plot">
     <div class="plot-title">predictive std</div>
     <div class="canvas-wrap">
-      <canvas id="cvS" class="main" width="320" height="320"></canvas>
-      <canvas id="ovS" class="overlay" width="320" height="320"></canvas>
+      <canvas id="cvS" class="main" width="368" height="358"></canvas>
+      <canvas id="ovS" class="overlay" width="368" height="358"></canvas>
     </div>
     <div class="cbrow">
       <span class="cblbl">0.00</span>
@@ -966,12 +889,13 @@ ${fixtureScript('__DEFAULT_FIXTURE__', penicillinFixture)}
 var Predictor = axjs.Predictor;
 
 var N = 320, GS = 60;
+var ML = 48, MT = 0, MB = 38; // margins: left, top, bottom (pixels)
+var CW = N + ML, CH = N + MB;  // total canvas size
 var predictor = null, fixture = null;
 var params = [], paramNames = [], paramBounds = [], fixedValues = [];
 var dimOrder = []; // dims sorted by importance
 var axX = 0, axY = 1, selectedOutcome = '';
 var contourMode = true;
-var nearbyOnly = true;
 
 var ctxM  = document.getElementById('cvM').getContext('2d');
 var ctxS  = document.getElementById('cvS').getContext('2d');
@@ -983,15 +907,12 @@ var outcomeSelect = document.getElementById('outcomeSelect');
 
 function loadFixtureData(data) {
   fixture = normalizeFixture(data);
-  predictor = new Predictor({
-    search_space: fixture.search_space,
-    model_state: fixture.model_state
-  });
+  predictor = new Predictor(fixture);
   params = fixture.search_space.parameters;
   paramNames = predictor.paramNames;
   paramBounds = predictor.paramBounds;
-  fixedValues = closestToCenter(fixture.model_state, paramBounds, params)
-    || params.map(function(p) { return defaultParamValue(p); });
+  var _td = predictor.getTrainingData();
+  fixedValues = _td.X.length > 0 ? _td.X[0].slice() : params.map(function(p) { return defaultParamValue(p); });
 
   outcomeSelect.innerHTML = '';
   predictor.outcomeNames.forEach(function(name) {
@@ -1028,8 +949,7 @@ function loadFixtureData(data) {
 }
 
 function updateDimOrder() {
-  dimOrder = computeDimOrder(fixture.model_state, paramNames.length,
-    predictor.outcomeNames, selectedOutcome);
+  dimOrder = computeDimOrder(predictor, paramNames.length, selectedOutcome);
 }
 
 document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -1058,11 +978,6 @@ document.getElementById('cbContour').addEventListener('change', function() {
   contourMode = this.checked;
   render();
 });
-document.getElementById('cbNearby').addEventListener('change', function() {
-  nearbyOnly = this.checked;
-  render();
-});
-
 function buildSliders() {
   var div = document.getElementById('sliders');
   var label = document.getElementById('sliderLabel');
@@ -1199,36 +1114,37 @@ function nearestCatIdx(catVals, val) {
 }
 
 function axisToPixel(axIdx, val) {
-  // Convert a parameter value to canvas pixel [0, N]
+  // Convert a parameter value to canvas pixel (with margin offset)
   if (axIdx === axX && xIsChoice) {
     var ci = nearestCatIdx(xCatVals, val);
-    return (ci + 0.5) / xCatVals.length * N;
+    return ML + (ci + 0.5) / xCatVals.length * N;
   }
   if (axIdx === axY && yIsChoice) {
     var ci = nearestCatIdx(yCatVals, val);
-    return (1 - (ci + 0.5) / yCatVals.length) * N;
+    return MT + (1 - (ci + 0.5) / yCatVals.length) * N;
   }
   var lo = paramBounds[axIdx][0], hi = paramBounds[axIdx][1];
-  if (axIdx === axX) return (val - lo) / ((hi - lo) || 1) * N;
-  return (1 - (val - lo) / ((hi - lo) || 1)) * N;
+  if (axIdx === axX) return ML + (val - lo) / ((hi - lo) || 1) * N;
+  return MT + (1 - (val - lo) / ((hi - lo) || 1)) * N;
 }
 
 function pixelToValue(axIdx, px) {
-  // Convert canvas pixel to parameter value
+  // Convert canvas pixel to parameter value (accounting for margins)
+  var p = (axIdx === axX) ? px - ML : px - MT; // offset by margin
   if (axIdx === axX && xIsChoice) {
-    var ci = Math.floor(px / N * xCatVals.length);
+    var ci = Math.floor(p / N * xCatVals.length);
     ci = Math.max(0, Math.min(xCatVals.length - 1, ci));
     return xCatVals[ci];
   }
   if (axIdx === axY && yIsChoice) {
-    var ci = Math.floor((1 - px / N) * yCatVals.length);
+    var ci = Math.floor((1 - p / N) * yCatVals.length);
     ci = Math.max(0, Math.min(yCatVals.length - 1, ci));
     return yCatVals[ci];
   }
   var lo = paramBounds[axIdx][0], hi = paramBounds[axIdx][1];
   var v;
-  if (axIdx === axX) v = lo + (hi - lo) * px / N;
-  else v = hi - (hi - lo) * px / N;
+  if (axIdx === axX) v = lo + (hi - lo) * p / N;
+  else v = hi - (hi - lo) * p / N;
   if (isInteger(params[axIdx])) v = Math.round(v);
   return v;
 }
@@ -1287,13 +1203,18 @@ function render() {
     }
   }
 
-  ctxM.putImageData(imgM, 0, 0);
-  ctxS.putImageData(imgS, 0, 0);
+  // Clear full canvas and place heatmap at margin offset
+  ctxM.clearRect(0, 0, CW, CH);
+  ctxS.clearRect(0, 0, CW, CH);
+  ctxM.putImageData(imgM, ML, MT);
+  ctxS.putImageData(imgS, ML, MT);
 
   // Contour lines — only when both axes are continuous (contours across categories are meaningless)
   if (contourMode && !xIsChoice && !yIsChoice) {
+    [ctxM, ctxS].forEach(function(ctx) { ctx.save(); ctx.translate(ML, MT); });
     drawContourLines(ctxM, means, gsX, N, meanMin, meanRange, viridis);
     drawContourLines(ctxS, stds, gsX, N, 0, stdMax || 1, plasma);
+    [ctxM, ctxS].forEach(function(ctx) { ctx.restore(); });
   }
 
   // Draw category grid lines to visually separate discrete bands
@@ -1302,26 +1223,94 @@ function render() {
       ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
       if (xIsChoice) {
         for (var ci = 1; ci < xCatVals.length; ci++) {
-          var lx = Math.round(ci * cellW);
-          ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, N); ctx.stroke();
+          var lx = ML + Math.round(ci * cellW);
+          ctx.beginPath(); ctx.moveTo(lx, MT); ctx.lineTo(lx, MT + N); ctx.stroke();
         }
       }
       if (yIsChoice) {
         for (var ci = 1; ci < yCatVals.length; ci++) {
-          var ly = Math.round(ci * cellH);
-          ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(N, ly); ctx.stroke();
+          var ly = MT + Math.round(ci * cellH);
+          ctx.beginPath(); ctx.moveTo(ML, ly); ctx.lineTo(ML + N, ly); ctx.stroke();
         }
       }
     });
   }
+
+  // Draw axis ticks and labels in the margin area
+  [ctxM, ctxS].forEach(function(ctx) {
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1;
+    var nTicks = 4;
+
+    // X-axis ticks
+    if (xIsChoice) {
+      ctx.textAlign = 'center';
+      var cw = N / xCatVals.length;
+      for (var ci = 0; ci < xCatVals.length; ci++) {
+        var tx = ML + (ci + 0.5) * cw;
+        ctx.beginPath(); ctx.moveTo(tx, MT + N); ctx.lineTo(tx, MT + N + 4); ctx.stroke();
+        ctx.fillText(String(params[axX].values[ci]), tx, MT + N + 15);
+      }
+    } else {
+      ctx.textAlign = 'center';
+      var xRange = paramBounds[axX][1] - paramBounds[axX][0];
+      for (var ti = 0; ti <= nTicks; ti++) {
+        var tv = paramBounds[axX][0] + xRange * ti / nTicks;
+        var tx = ML + ti * N / nTicks;
+        ctx.beginPath(); ctx.moveTo(tx, MT + N); ctx.lineTo(tx, MT + N + 4); ctx.stroke();
+        ctx.fillText(formatParamValue(tv, params[axX]), tx, MT + N + 15);
+      }
+    }
+
+    // X-axis label
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(paramNames[axX], ML + N / 2, MT + N + 30);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+
+    // Y-axis ticks
+    if (yIsChoice) {
+      ctx.textAlign = 'right';
+      var ch = N / yCatVals.length;
+      for (var ci = 0; ci < yCatVals.length; ci++) {
+        var ty = MT + (yCatVals.length - 1 - ci + 0.5) * ch;
+        ctx.beginPath(); ctx.moveTo(ML - 4, ty); ctx.lineTo(ML, ty); ctx.stroke();
+        ctx.fillText(String(params[axY].values[ci]), ML - 6, ty + 3);
+      }
+    } else {
+      ctx.textAlign = 'right';
+      var yRange = paramBounds[axY][1] - paramBounds[axY][0];
+      for (var ti = 0; ti <= nTicks; ti++) {
+        var tv = paramBounds[axY][0] + yRange * ti / nTicks;
+        var ty = MT + (1 - ti / nTicks) * N;
+        ctx.beginPath(); ctx.moveTo(ML - 4, ty); ctx.lineTo(ML, ty); ctx.stroke();
+        ctx.fillText(formatParamValue(tv, params[axY]), ML - 6, ty + 3);
+      }
+    }
+
+    // Y-axis label (rotated)
+    ctx.save();
+    ctx.translate(12, MT + N / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(paramNames[axY], 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'start'; // reset
+  });
 
   document.getElementById('mlo').textContent = meanMin.toFixed(2);
   document.getElementById('mhi').textContent = meanMax.toFixed(2);
   document.getElementById('shi').textContent = stdMax.toFixed(2);
   drawColorbar('cbM', viridis);
   drawColorbar('cbS', plasma);
-  pinnedTrainIdx = -1; // reset pin on re-render
-  drawOverlays(undefined, undefined, -1, -1);
+  // Preserve pinned state across re-renders — draw overlays with active pin
+  drawOverlays(undefined, undefined, -1, pinnedTrainIdx);
 }
 
 var pinnedTrainIdx = -1; // pinned training point index (-1 = none)
@@ -1329,83 +1318,32 @@ var hoverNeighborIdx = -1; // hover-based neighbor highlight (-1 = none)
 
 function drawOverlays(hx, hy, hoveredIdx, neighborActiveIdx) {
   [ctxOM, ctxOS].forEach(function(ctx) {
-    ctx.clearRect(0, 0, N, N);
+    ctx.clearRect(0, 0, CW, CH);
     if (hx !== undefined) {
-      ctx.beginPath(); ctx.moveTo(hx, 0); ctx.lineTo(hx, N);
-      ctx.moveTo(0, hy); ctx.lineTo(N, hy);
+      ctx.beginPath(); ctx.moveTo(hx, MT); ctx.lineTo(hx, MT + N);
+      ctx.moveTo(ML, hy); ctx.lineTo(ML + N, hy);
       ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 0.5; ctx.stroke();
-    }
-    ctx.font = '12px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText(paramNames[axX] + ' →', N - 60, xIsChoice ? N - 16 : N - 8);
-    ctx.save(); ctx.translate(yIsChoice ? 6 : 14, 70); ctx.rotate(-Math.PI / 2);
-    ctx.fillText(paramNames[axY] + ' →', 0, 0); ctx.restore();
-
-    // Category labels on axes
-    if (xIsChoice || yIsChoice) {
-      ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.textAlign = 'center';
-      if (xIsChoice) {
-        var cw = N / xCatVals.length;
-        for (var ci = 0; ci < xCatVals.length; ci++) {
-          ctx.fillText(String(params[axX].values[ci]), (ci + 0.5) * cw, N - 2);
-        }
-      }
-      if (yIsChoice) {
-        var ch = N / yCatVals.length;
-        ctx.textAlign = 'right';
-        for (var ci = 0; ci < yCatVals.length; ci++) {
-          ctx.fillText(String(params[axY].values[ci]), 28, (yCatVals.length - 1 - ci + 0.5) * ch + 4);
-        }
-      }
-      ctx.textAlign = 'start'; // reset
-    }
-
-    // Numeric ticks for continuous axes
-    if (!xIsChoice) {
-      ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      var xRange = paramBounds[axX][1] - paramBounds[axX][0];
-      var nxt = 4;
-      for (var ti = 0; ti <= nxt; ti++) {
-        var tv = paramBounds[axX][0] + xRange * ti / nxt;
-        var tx = ti * N / nxt;
-        ctx.fillText(formatParamValue(tv, params[axX]), tx - 8, N - 2);
-      }
-    }
-    if (!yIsChoice) {
-      ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      var yRange = paramBounds[axY][1] - paramBounds[axY][0];
-      var nyt = 4;
-      for (var ti = 0; ti <= nyt; ti++) {
-        var tv = paramBounds[axY][0] + yRange * ti / nyt;
-        var ty = (1 - ti / nyt) * N;
-        ctx.fillText(formatParamValue(tv, params[axY]), 2, ty + 3);
-      }
     }
 
     if (fixture) {
-      var td = getTrainData(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-      if (td.trainX) {
-        var subModel = getModelForOutcome(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-        var ptLS = findLS(subModel.kernel || subModel.data_kernel);
-        var ptTf = subModel.input_transform;
-        var activePt = (neighborActiveIdx >= 0 && neighborActiveIdx < td.trainX.length)
-          ? td.trainX[neighborActiveIdx] : null;
+      var td = predictor.getTrainingData(selectedOutcome);
+      if (td.X.length > 0) {
+        var activePt = (neighborActiveIdx >= 0 && neighborActiveIdx < td.X.length)
+          ? td.X[neighborActiveIdx] : null;
 
         // If in neighbor mode, pre-compute relative scaling
         var neighborRels = null, neighborMax = 0;
         if (activePt) {
           neighborRels = [];
-          for (var ni = 0; ni < td.trainX.length; ni++) {
+          for (var ni = 0; ni < td.X.length; ni++) {
             if (ni === neighborActiveIdx) { neighborRels.push(1); continue; }
-            var nr = pointRelevance(td.trainX[ni], activePt, [], ptLS, ptTf, params);
+            var nr = predictor.kernelCorrelation(td.X[ni], activePt, selectedOutcome);
             neighborRels.push(nr);
             if (nr > neighborMax) neighborMax = nr;
           }
         }
 
-        td.trainX.forEach(function(pt, i) {
-          var sliceAlpha = pointRelevance(pt, fixedValues, [axX, axY], ptLS, ptTf, params);
-          if (nearbyOnly && !activePt && sliceAlpha < 0.03) return;
+        td.X.forEach(function(pt, i) {
           var fillAlpha;
           if (activePt) {
             if (i === neighborActiveIdx) {
@@ -1416,7 +1354,7 @@ function drawOverlays(hx, hy, hoveredIdx, neighborActiveIdx) {
               fillAlpha = Math.max(0.08, Math.min(0.90, Math.sqrt(relNorm)));
             }
           } else {
-            fillAlpha = nearbyOnly ? Math.max(0.10, Math.min(0.95, sliceAlpha)) : 0.95;
+            fillAlpha = 0.95;
           }
           var ppx = axisToPixel(axX, pt[axX]);
           var ppy = axisToPixel(axY, pt[axY]);
@@ -1442,8 +1380,8 @@ function drawOverlays(hx, hy, hoveredIdx, neighborActiveIdx) {
 var HOVER_R = 9;
 function nearestTrainPoint(canvasPx, canvasPy) {
   if (!fixture) return -1;
-  var trainX = getTrainData(fixture.model_state, predictor.outcomeNames, selectedOutcome).trainX;
-  if (!trainX) return -1;
+  var trainX = predictor.getTrainingData(selectedOutcome).X;
+  if (!trainX.length) return -1;
   var best = -1, bestD = HOVER_R;
   trainX.forEach(function(pt, i) {
     var dx = axisToPixel(axX, pt[axX]) - canvasPx;
@@ -1477,28 +1415,20 @@ function nearestTrainPoint(canvasPx, canvasPy) {
     }
 
     if (hitIdx >= 0) {
-      var td = getTrainData(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-      var tpt = td.trainX[hitIdx];
-      var yVal = untransformY(
-        Array.isArray(td.trainY[hitIdx]) ? td.trainY[hitIdx][0] : td.trainY[hitIdx], td.outTf);
-      var subModel = getModelForOutcome(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-      var ptLS = findLS(subModel.kernel || subModel.data_kernel);
-      var ptTf = subModel.input_transform;
-      var rel = pointRelevance(tpt, fixedValues, [axX, axY], ptLS, ptTf, params);
-
+      var td = predictor.getTrainingData(selectedOutcome);
+      var tpt = td.X[hitIdx];
+      var yVal = td.Y[hitIdx];
       ttTitle.textContent = 'training point #' + (hitIdx + 1);
       ttBody.innerHTML = '<span class="tt-val">y = ' + yVal.toFixed(4) + '</span><br>' +
         paramNames.map(function(name, j) {
           return '<span class="tt-coord">' + name + '</span> = ' + formatParamValue(tpt[j], params[j]);
-        }).join('<br>') +
-        '<br>relevance: ' + (rel * 100).toFixed(0) + '%';
+        }).join('<br>');
       tt.style.display = 'block';
       tt.style.left = (e.clientX + 16) + 'px';
       tt.style.top = (e.clientY - 10) + 'px';
 
       document.getElementById('statline').innerHTML =
-        'point #' + (hitIdx + 1) + ' &nbsp; y = <span>' + yVal.toFixed(4) +
-        '</span> &nbsp; relevance: ' + (rel * 100).toFixed(0) + '%';
+        'point #' + (hitIdx + 1) + ' &nbsp; y = <span>' + yVal.toFixed(4) + '</span>';
       cv.style.cursor = 'pointer';
     } else {
       var pt = fixedValues.slice(); pt[axX] = xv; pt[axY] = yv;
@@ -1530,8 +1460,8 @@ function nearestTrainPoint(canvasPx, canvasPy) {
       } else {
         pinnedTrainIdx = hitIdx;
         // Snap sliders to clicked point's coordinates
-        var td = getTrainData(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-        var clickedPt = td.trainX[hitIdx];
+        var td = predictor.getTrainingData(selectedOutcome);
+        var clickedPt = td.X[hitIdx];
         for (var j = 0; j < fixedValues.length; j++) fixedValues[j] = clickedPt[j];
         buildSliders();
         render();
@@ -1759,7 +1689,7 @@ input[type=range] { accent-color: #7c6ff7; cursor: pointer; }
 </head>
 <body>
 
-<h1 id="title">Multi-Objective Radar</h1>
+<h1 id="title">${axHomeLink}Multi-Objective Radar</h1>
 <p class="subtitle" id="subtitle">Load a fixture to visualize</p>
 
 <div class="top-controls">
@@ -1826,12 +1756,7 @@ function abbreviate(name) {
 
 function loadFixtureData(data) {
   var fix = normalizeFixture(data);
-  predictor = new Predictor({
-    search_space: fix.search_space,
-    model_state: fix.model_state,
-    outcome_names: fix.outcome_names,
-    adapter_transforms: fix.adapter_transforms
-  });
+  predictor = new Predictor(fix);
 
   params = fix.search_space.parameters;
   paramBounds = predictor.paramBounds;
@@ -2359,15 +2284,19 @@ button:hover { background: #252528; }
 </head>
 <body>
 
-<h1>Multi-Outcome Scatterplot</h1>
+<h1>${axHomeLink}Multi-Outcome Scatterplot</h1>
 <p class="subtitle" id="subtitle">Training arms relativized vs status quo</p>
 
 <div class="controls">
   <label>X axis <select id="selX"></select></label>
   <label>Y axis <select id="selY"></select></label>
   <label style="margin-left:8px">Status Quo: <select id="selSQ"></select></label>
-  <label class="cb-label" style="margin-left:8px">
-    <input type="checkbox" id="cbNearby"> nearby points only
+  <label style="margin-left:8px">Distance:
+    <select id="selDistMode">
+      <option value="euclidean">euclidean distance</option>
+      <option value="bi-objective" selected>bi-objective kernel</option>
+      <option value="kernel">kernel distance</option>
+    </select>
   </label>
   <button id="btnResample">resample ↺</button>
 </div>
@@ -2447,7 +2376,7 @@ var HP = [
 // Input transform: raw bounds → [0,1]^7 (Normalize)
 var INPUT_TF = {
   offset: BOUNDS.map(function(b) { return b[0]; }),
-  coefficient: BOUNDS.map(function(b) { return 1 / (b[1] - b[0]); })
+  coefficient: BOUNDS.map(function(b) { return b[1] - b[0]; })
 };
 var SEARCH_SPACE = {
   parameters: PARAM_NAMES.map(function(name, i) {
@@ -2706,7 +2635,7 @@ var svg = document.getElementById('scatterSvg');
 var rightPanel = document.getElementById('rightPanel');
 var rpTitle = document.getElementById('rpTitle');
 var rpBars = document.getElementById('rpBars');
-var cbNearby = document.getElementById('cbNearby');
+var selDistMode = document.getElementById('selDistMode');
 
 var W = 520, H = 460;
 var margin = { top: 30, right: 20, bottom: 55, left: 65 };
@@ -2875,6 +2804,43 @@ function getRefPoint() {
   return trainX[item.idx] || null;
 }
 
+function euclideanRelevance(pt, ref) {
+  // Normalized euclidean distance in [0,1] input space, converted to RBF-like relevance
+  var d2 = 0;
+  for (var j = 0; j < ref.length; j++) {
+    var diff = pt[j] - ref[j];
+    var coeff = INPUT_TF.coefficient[j];
+    var scaled = diff / coeff;
+    d2 += scaled * scaled;
+  }
+  return Math.exp(-0.5 * d2);
+}
+
+function biObjectiveKernelRelevance(pt, ref) {
+  // Geometric mean of kernel relevances for just the two plotted outcomes
+  var indices = [xOutIdx, yOutIdx];
+  var logSum = 0;
+  for (var k = 0; k < indices.length; k++) {
+    var oi = indices[k];
+    if (oi >= HP.length) continue;
+    var raw = pointRelevance(pt, ref, [], HP[oi].ls, INPUT_TF);
+    logSum += Math.log(Math.max(raw, 1e-300));
+  }
+  var geoMean = Math.exp(logSum / indices.length);
+  return geoMean * geoMean * geoMean; // cube to sharpen
+}
+
+function allKernelRelevance(pt, ref) {
+  // Geometric mean of kernel relevances across ALL outcome kernels
+  var logSum = 0;
+  for (var k = 0; k < HP.length; k++) {
+    var raw = pointRelevance(pt, ref, [], HP[k].ls, INPUT_TF);
+    logSum += Math.log(Math.max(raw, 1e-300));
+  }
+  var geoMean = Math.exp(logSum / HP.length);
+  return geoMean * geoMean * geoMean; // cube to sharpen
+}
+
 function updateOpacities() {
   var refPt = getRefPoint();
   var groups = svg.querySelectorAll('g[data-idx]');
@@ -2882,30 +2848,23 @@ function updateOpacities() {
     for (var g = 0; g < groups.length; g++) groups[g].setAttribute('opacity', 1);
     return;
   }
-  // Compute kernel-distance relevance using geometric mean across ALL outcome kernels.
-  // Each outcome has its own RBF lengthscales; geometric mean of exp(-d²_k) = exp(-mean(d²_k)).
-  // Then cube to sharpen contrast (large lengthscales compress the raw range).
-  function multiKernelRelevance(pt, ref) {
-    var logSum = 0;
-    for (var k = 0; k < HP.length; k++) {
-      var raw = pointRelevance(pt, ref, [], HP[k].ls, INPUT_TF);
-      logSum += Math.log(Math.max(raw, 1e-300));
-    }
-    var geoMean = Math.exp(logSum / HP.length);
-    return geoMean * geoMean * geoMean; // cube to sharpen
-  }
+  var distMode = selDistMode.value;
+  var relevanceFn = distMode === 'euclidean' ? euclideanRelevance
+    : distMode === 'bi-objective' ? biObjectiveKernelRelevance
+    : allKernelRelevance;
+
   var armRels = [], candRels = [], maxRel = 0;
   for (var i = 0; i < nArms; i++) {
-    var rel = multiKernelRelevance(trainX[i], refPt);
+    var rel = relevanceFn(trainX[i], refPt);
     armRels[i] = rel;
     if (rel < 0.999 && rel > maxRel) maxRel = rel;
   }
   for (var ci = 0; ci < candidates.length; ci++) {
-    var rel = multiKernelRelevance(candidates[ci].params, refPt);
+    var rel = relevanceFn(candidates[ci].params, refPt);
     candRels[ci] = rel;
     if (rel < 0.999 && rel > maxRel) maxRel = rel;
   }
-  var minOpacity = cbNearby.checked ? 0.04 : 0.15;
+  var minOpacity = 0.08;
   for (var g = 0; g < groups.length; g++) {
     var idx = parseInt(groups[g].getAttribute('data-idx'));
     var gType = groups[g].getAttribute('data-type');
@@ -3172,7 +3131,7 @@ selSQ.addEventListener('change', function() {
   renderScatter();
   showDeltoid(null);
 });
-cbNearby.addEventListener('change', function() { updateOpacities(); });
+selDistMode.addEventListener('change', function() { updateOpacities(); });
 
 document.getElementById('btnResample').addEventListener('click', function() {
   selectedItem = null;
@@ -3279,7 +3238,7 @@ const pointProximity = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>Point Proximity — Opacity Diagnostic</h1>
+<h1>${axHomeLink}Point Proximity — Opacity Diagnostic</h1>
 <p class="subtitle" id="subtitle">20 pts, 10d Ackley, ARD RBF</p>
 
 <div class="ctrl-row">
@@ -3335,14 +3294,6 @@ const pointProximity = `<!DOCTYPE html>
   <div class="ctrl-group">
     <label>X</label><select id="selX"></select>
     <label>Y</label><select id="selY"></select>
-  </div>
-  <div class="ctrl-group">
-    <label>Threshold</label>
-    <input type="range" id="threshSlider" min="0" max="0.30" step="0.005" value="0.03">
-    <span class="val-lbl" id="threshLabel">0.03</span>
-  </div>
-  <div class="ctrl-group">
-    <label><input type="checkbox" id="nearbyOnly"> nearby only</label>
   </div>
 </div>
 
@@ -3447,7 +3398,6 @@ var axX = 0, axY = 1;
 var fixedValues;
 var neighborActiveIdx = -1;  // pinned point (click)
 var hoveredIdx = -1;         // hovered point (mousemove, transient)
-var threshold = 0.03;
 // Cached from last render() for lightweight dot redraws
 var cachedSliceRelData = null;
 var cached1dImage = null;
@@ -3572,11 +3522,9 @@ function render() {
 
   var formulaKey = document.getElementById('selFormula').value;
   var formulaFn = FORMULAS[formulaKey];
-  var nearbyOnly = document.getElementById('nearbyOnly').checked;
   var distMode = document.getElementById('selDistance').value;
   var normMode = document.getElementById('selNorm').value;
   var opacityMode = document.getElementById('selOpacity').value;
-  threshold = +document.getElementById('threshSlider').value;
   var plottedDims = axY >= 0 ? [axX, axY] : [axX];
 
   // ── 1D Slice ──
@@ -3662,55 +3610,48 @@ function render() {
   cached1dImage = ctx1d.getImageData(0, 0, W1, H1);
 
   // ── Compute relevance for all training points ──
-  var refPoint = fixedValues;
-  var refPlotted = plottedDims;
   var isNeighborMode = (neighborActiveIdx >= 0 && neighborActiveIdx < trainX.length);
-  if (isNeighborMode) {
-    refPoint = trainX[neighborActiveIdx];
-    refPlotted = []; // neighbor mode: all dims in distance
-  }
 
   var relData = []; // {d2, relevance, opacity, idx}
   var maxRel = 0;
-  for (var i = 0; i < trainX.length; i++) {
-    if (isNeighborMode && i === neighborActiveIdx) {
-      relData.push({ d2: 0, relevance: 1, opacity: 0.95, idx: i, visible: true });
-      continue;
-    }
-    var r = computeRelevance(trainX[i], refPoint, refPlotted, LS, formulaFn, distMode, normMode);
-    relData.push({ d2: r.d2, relevance: r.relevance, opacity: 0, idx: i, visible: true });
-    if (r.relevance > maxRel) maxRel = r.relevance;
-  }
-
-  // Compute opacities — raw correlation as alpha in all modes
   var visCount = 0;
   var opacitySum = 0;
-  for (var i = 0; i < relData.length; i++) {
-    var rd = relData[i];
-    var rawRel = rd.relevance;
-    // Apply opacity mapping (same logic for slice and neighbor mode)
-    var mapped;
-    if (opacityMode === 'relative') {
-      var rn = maxRel > 0 ? rawRel / maxRel : 0;
-      mapped = Math.sqrt(rn);
-    } else if (opacityMode === 'sqrt') {
-      mapped = Math.sqrt(rawRel);
-    } else {
-      mapped = rawRel; // linear — raw correlation
-    }
-    // Active point always fully visible
-    if (isNeighborMode && i === neighborActiveIdx) {
-      rd.opacity = 0.95; rd.visible = true;
-    } else {
-      var threshVal = (opacityMode === 'relative') ? mapped : rawRel;
-      if (nearbyOnly && threshVal < threshold) {
-        rd.visible = false; rd.opacity = 0;
-      } else {
-        rd.visible = true;
-        rd.opacity = Math.max(0.05, Math.min(0.90, mapped));
+
+  if (isNeighborMode) {
+    var refPoint = trainX[neighborActiveIdx];
+    for (var i = 0; i < trainX.length; i++) {
+      if (i === neighborActiveIdx) {
+        relData.push({ d2: 0, relevance: 1, opacity: 0.95, idx: i, visible: true });
+        continue;
       }
+      var r = computeRelevance(trainX[i], refPoint, [], LS, formulaFn, distMode, normMode);
+      relData.push({ d2: r.d2, relevance: r.relevance, opacity: 0, idx: i, visible: true });
+      if (r.relevance > maxRel) maxRel = r.relevance;
     }
-    if (rd.visible) { visCount++; opacitySum += rd.opacity; }
+    // Compute opacities with selected mapping
+    for (var i = 0; i < relData.length; i++) {
+      var rd = relData[i];
+      if (i === neighborActiveIdx) { visCount++; opacitySum += rd.opacity; continue; }
+      var rawRel = rd.relevance;
+      var mapped;
+      if (opacityMode === 'relative') {
+        var rn = maxRel > 0 ? rawRel / maxRel : 0;
+        mapped = Math.sqrt(rn);
+      } else if (opacityMode === 'sqrt') {
+        mapped = Math.sqrt(rawRel);
+      } else {
+        mapped = rawRel;
+      }
+      rd.opacity = Math.max(0.05, Math.min(0.90, mapped));
+      rd.visible = true;
+      visCount++; opacitySum += rd.opacity;
+    }
+  } else {
+    // No reference point: all dots at uniform full opacity
+    for (var i = 0; i < trainX.length; i++) {
+      relData.push({ d2: 0, relevance: 1, opacity: 0.85, idx: i, visible: true });
+      visCount++; opacitySum += 0.85;
+    }
   }
   cachedSliceRelData = relData;
 
@@ -3823,26 +3764,35 @@ function render() {
   // ── Histograms ──
   var dists = relData.map(function(rd) { return Math.sqrt(rd.d2); });
   var maxDist = Math.max.apply(null, dists) || 1;
-  drawHistogram(ctxHD, 360, 180, dists, relData, 0, maxDist,
-    'distance', formulaKey, threshold, true);
-
-  var corrs = relData.map(function(rd) { return rd.relevance; });
-  drawHistogram(ctxHC, 360, 180, corrs, relData, 0, 1,
-    'relevance', formulaKey, threshold, false);
+  if (isNeighborMode) {
+    drawHistogram(ctxHD, 360, 180, dists, relData, 0, maxDist,
+      'distance', formulaKey);
+    var corrs = relData.map(function(rd) { return rd.relevance; });
+    drawHistogram(ctxHC, 360, 180, corrs, relData, 0, 1,
+      'relevance', formulaKey);
+  } else {
+    // Clear histograms when no reference point
+    ctxHD.clearRect(0, 0, 360, 180);
+    ctxHD.fillStyle = '#0f0f11'; ctxHD.fillRect(0, 0, 360, 180);
+    ctxHD.fillStyle = '#444'; ctxHD.font = '12px sans-serif';
+    ctxHD.fillText('Click a training point to see distances', 50, 90);
+    ctxHC.clearRect(0, 0, 360, 180);
+    ctxHC.fillStyle = '#0f0f11'; ctxHC.fillRect(0, 0, 360, 180);
+    ctxHC.fillStyle = '#444'; ctxHC.font = '12px sans-serif';
+    ctxHC.fillText('Click a training point to see correlations', 40, 90);
+  }
 
   // Status line
   var meanOpacity = visCount > 0 ? (opacitySum / visCount) : 0;
   var modeStr = isNeighborMode
     ? 'Neighbor mode (point #' + neighborActiveIdx + ')'
-    : 'Slice mode';
-  var nSliceDims = isNeighborMode ? nDim : Math.max(0, nDim - plottedDims.length);
+    : nPts + ' points, ' + nDim + 'd Ackley';
   document.getElementById('statline').innerHTML =
     modeStr + ' · Mean opacity: <span>' + meanOpacity.toFixed(2) +
-    '</span> · Visible: <span>' + visCount + '/' + nPts +
-    '</span> · Sliced dims: <span>' + nSliceDims + '</span>';
+    '</span> · Visible: <span>' + visCount + '/' + nPts + '</span>';
 }
 
-function drawHistogram(ctx, W, H, values, relData, lo, hi, xlabel, formulaKey, thresh, isDistHist) {
+function drawHistogram(ctx, W, H, values, relData, lo, hi, xlabel, formulaKey) {
   var PAD_L = 40, PAD_R = 10, PAD_T = 10, PAD_B = 28;
   var pw = W - PAD_L - PAD_R, ph = H - PAD_T - PAD_B;
   var NBINS = 20;
@@ -3880,30 +3830,6 @@ function drawHistogram(ctx, W, H, values, relData, lo, hi, xlabel, formulaKey, t
     ctx.fillRect(bx + 1, by, barW - 2, barH);
     ctx.strokeStyle = 'rgba(100, 180, 255, 0.4)'; ctx.lineWidth = 0.5;
     ctx.strokeRect(bx + 1, by, barW - 2, barH);
-  }
-
-  // Threshold line — invert formula to find distance where formula(d²) = thresh
-  var threshX;
-  if (isDistHist) {
-    var threshDist;
-    if (thresh > 0 && thresh < 1) {
-      var lnT = -Math.log(thresh);
-      if (formulaKey.indexOf('0.5') >= 0) threshDist = Math.sqrt(2 * lnT);
-      else if (formulaKey === 'exp(-d)') threshDist = lnT;
-      else if (formulaKey.indexOf('-2') >= 0) threshDist = Math.sqrt(lnT / 2);
-      else threshDist = Math.sqrt(lnT); // exp(-d²)
-    } else {
-      threshDist = hi;
-    }
-    threshX = PAD_L + (threshDist - lo) / range * pw;
-  } else {
-    threshX = PAD_L + (thresh - lo) / range * pw;
-  }
-  if (threshX >= PAD_L && threshX <= PAD_L + pw) {
-    ctx.setLineDash([4, 3]);
-    ctx.strokeStyle = 'rgba(255, 180, 80, 0.7)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(threshX, PAD_T); ctx.lineTo(threshX, PAD_T + ph);
-    ctx.stroke(); ctx.setLineDash([]);
   }
 
   // X axis labels
@@ -4164,13 +4090,6 @@ document.getElementById('useCorrelation').addEventListener('change', function() 
   document.getElementById(id).addEventListener('change', function() { render(); });
 });
 
-document.getElementById('threshSlider').addEventListener('input', function() {
-  document.getElementById('threshLabel').textContent = (+this.value).toFixed(2);
-  render();
-});
-
-document.getElementById('nearbyOnly').addEventListener('change', function() { render(); });
-
 document.getElementById('selX').addEventListener('change', function() {
   axX = +this.value;
   if (axY >= 0 && axX === axY) { axY = (axX + 1) % nDim; document.getElementById('selY').value = axY; }
@@ -4192,16 +4111,2193 @@ render();
 </html>`;
 
 
-// Write all six
+// ─── Cross-Validation Plot ───────────────────────────────────────────────────
+
+const crossValidation = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>axjs — LOO Cross-Validation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f0f11; color: #e0e0e0; padding: 2rem; min-height: 100vh; }
+  h1 { font-size: 18px; font-weight: 500; color: #f0f0f0; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 16px; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  label { font-size: 13px; color: #aaa; }
+  select, button, input[type=file] { font-size: 13px; padding: 5px 10px;
+    border-radius: 6px; border: 0.5px solid #444; background: #1a1a1d; color: #e0e0e0; cursor: pointer; outline: none; }
+  button:hover { background: #252528; }
+  #plotArea { display: flex; gap: 12px; flex-wrap: wrap; }
+  .cv-tile { background: #141418; border: 0.5px solid #222;
+    border-radius: 8px; overflow: hidden; position: relative; }
+  .cv-title { font-size: 13px; font-weight: 500; color: #ccc; text-align: center; padding: 6px 0 0; }
+  .hint { font-size: 11px; color: #555; margin-top: 8px; }
+  #tooltip { position: fixed; background: rgba(20,20,24,0.95); border: 0.5px solid #444;
+    border-radius: 6px; padding: 8px 12px; font-size: 12px; pointer-events: none;
+    display: none; z-index: 100; max-width: 300px; }
+  .tt-title { font-weight: 600; color: #aaa; margin-bottom: 4px; }
+  .tt-val { color: #7c9aff; }
+</style>
+</head>
+<body>
+<h1>${axHomeLink}Leave-One-Out Cross-Validation</h1>
+<div class="subtitle" id="subtitle">Observed vs predicted — load a fixture to begin</div>
+<div class="controls">
+  <label>Outcome: <select id="outcomeSelect"></select></label>
+  <label>File: <input type="file" id="fileInput" accept=".json"></label>
+</div>
+<div id="plotArea"></div>
+<div class="hint">Click a point to see kernel-distance neighbors. Click empty space to clear.</div>
+<div id="tooltip"></div>
+${libraryScript()}
+${fixtureScript('__DEFAULT_FIXTURE__', penicillinFixture)}
+${sharedUtilsScript()}
+<script>
+var Predictor = axjs.Predictor;
+var predictor, fixture, selectedOutcome;
+var cvPinnedIdx = -1;
+var plotPanels = [];
+var allOutcomeY = {};
+var tooltip = document.getElementById('tooltip');
+var outcomeSelect = document.getElementById('outcomeSelect');
+
+function broadcastHighlight(idx, rels) {
+  plotPanels.forEach(function(p) { p.highlight(idx, rels); });
+}
+function broadcastClear() {
+  plotPanels.forEach(function(p) { p.clear(); });
+  cvPinnedIdx = -1;
+}
+// Compute kernel correlations once (shared across panels)
+function computeRels(activeIdx, pts, outcomeName) {
+  var rawRels = [], maxRel = 0;
+  for (var i = 0; i < pts.length; i++) {
+    if (i === activeIdx) { rawRels.push(1); continue; }
+    var r = predictor.kernelCorrelation(pts[i], pts[activeIdx], outcomeName);
+    rawRels.push(r);
+    if (r > maxRel) maxRel = r;
+  }
+  return { raw: rawRels, max: maxRel };
+}
+
+function buildParamTooltip(idx, pts) {
+  var paramNames = predictor.paramNames;
+  var params = fixture.search_space.parameters;
+  var html = '';
+  // All outcomes
+  predictor.outcomeNames.forEach(function(name) {
+    var yArr = allOutcomeY[name];
+    if (!yArr || idx >= yArr.length) return;
+    var isSel = name === selectedOutcome;
+    html += (isSel ? '<b>' : '<span style="color:#888">') +
+      name + ' = <span class="tt-val">' + yArr[idx].toFixed(4) + '</span>' +
+      (isSel ? '</b>' : '</span>') + '<br>';
+  });
+  // Parameters
+  html += '<hr style="border-color:#333;margin:4px 0">';
+  paramNames.forEach(function(name, j) {
+    html += '<span style="color:#888">' + name + '</span> = ' +
+      formatParamValue(pts[idx][j], params[j]) + '<br>';
+  });
+  return html;
+}
+
+function loadFixtureData(data) {
+  fixture = normalizeFixture(data);
+  cvPinnedIdx = -1;
+  predictor = new Predictor(fixture);
+  outcomeSelect.innerHTML = '';
+  // Add "All" option if multi-output
+  if (predictor.outcomeNames.length > 1) {
+    var allOpt = document.createElement('option');
+    allOpt.value = '__all__'; allOpt.textContent = 'All outcomes';
+    outcomeSelect.appendChild(allOpt);
+  }
+  predictor.outcomeNames.forEach(function(name) {
+    var opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    outcomeSelect.appendChild(opt);
+  });
+  selectedOutcome = predictor.outcomeNames.length > 1 ? '__all__' : predictor.outcomeNames[0];
+  outcomeSelect.value = selectedOutcome;
+  document.getElementById('subtitle').textContent =
+    (fixture.metadata.name || 'Fixture') + ' — leave-one-out cross-validation';
+  render();
+}
+
+// Render a single LOO-CV plot for one outcome into a container element.
+// W/H control the SVG size (small multiples use smaller sizes).
+function renderCVPlot(outcomeName, container, W, H) {
+  var loo = predictor.loocv(outcomeName);
+  if (loo.observed.length === 0) { container.textContent = 'No data'; return; }
+
+  var observed = loo.observed;
+  var predicted = loo.mean;
+  var predStd = loo.variance.map(function(v) { return Math.sqrt(v); });
+  var td = predictor.getTrainingData(outcomeName);
+  var n = observed.length;
+  var isSmall = W < 350;
+
+  // R²
+  var meanObs = observed.reduce(function(a,b){return a+b;}, 0) / n;
+  var ssTot = 0, ssRes = 0;
+  for (var i = 0; i < n; i++) {
+    ssTot += (observed[i] - meanObs) * (observed[i] - meanObs);
+    ssRes += (observed[i] - predicted[i]) * (observed[i] - predicted[i]);
+  }
+  var r2 = 1 - ssRes / ssTot;
+
+  // Axis range
+  var allVals = observed.concat(predicted);
+  var lo = Math.min.apply(null, allVals), hi = Math.max.apply(null, allVals);
+  for (var i = 0; i < n; i++) {
+    lo = Math.min(lo, predicted[i] - 2 * predStd[i]);
+    hi = Math.max(hi, predicted[i] + 2 * predStd[i]);
+  }
+  var pad = 0.08 * (hi - lo); lo -= pad; hi += pad;
+
+  var margin = isSmall
+    ? { top: 24, right: 12, bottom: 30, left: 42 }
+    : { top: 30, right: 20, bottom: 40, left: 55 };
+  var pw = W - margin.left - margin.right;
+  var ph = H - margin.top - margin.bottom;
+
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+
+  function sx(v) { return margin.left + (v - lo) / (hi - lo) * pw; }
+  function sy(v) { return margin.top + ph - (v - lo) / (hi - lo) * ph; }
+
+  // Diagonal
+  var diag = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  diag.setAttribute('x1', sx(lo)); diag.setAttribute('y1', sy(lo));
+  diag.setAttribute('x2', sx(hi)); diag.setAttribute('y2', sy(hi));
+  diag.setAttribute('stroke', 'rgba(255,255,255,0.15)'); diag.setAttribute('stroke-width', '1');
+  diag.setAttribute('stroke-dasharray', '4,4');
+  svg.appendChild(diag);
+
+  // CI whiskers + dots
+  var dots = [];
+  var dotR = isSmall ? 3 : 4;
+  for (var i = 0; i < n; i++) {
+    var cx = sx(observed[i]), cy = sy(predicted[i]);
+    var ciLo = sy(predicted[i] - 2 * predStd[i]);
+    var ciHi = sy(predicted[i] + 2 * predStd[i]);
+    var whisker = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    whisker.setAttribute('x1', cx); whisker.setAttribute('x2', cx);
+    whisker.setAttribute('y1', ciHi); whisker.setAttribute('y2', ciLo);
+    whisker.setAttribute('stroke', 'rgba(124,154,255,0.3)'); whisker.setAttribute('stroke-width', isSmall ? '1' : '1.5');
+    svg.appendChild(whisker);
+    var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', dotR);
+    dot.setAttribute('fill', 'rgba(124,154,255,0.85)');
+    dot.setAttribute('stroke', 'rgba(255,255,255,0.5)'); dot.setAttribute('stroke-width', '1');
+    svg.appendChild(dot);
+    dots.push({ cx: cx, cy: cy, obs: observed[i], pred: predicted[i], std: predStd[i], idx: i, pt: td.X[i], dot: dot, whisker: whisker, dotR: dotR });
+  }
+
+  // Axis labels (skip on small multiples)
+  if (!isSmall) {
+    var xl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    xl.setAttribute('x', margin.left + pw/2); xl.setAttribute('y', H - 6);
+    xl.setAttribute('fill', '#888'); xl.setAttribute('font-size', '13');
+    xl.setAttribute('text-anchor', 'middle'); xl.textContent = 'Observed';
+    svg.appendChild(xl);
+    var yl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    yl.setAttribute('x', 14); yl.setAttribute('y', margin.top + ph/2);
+    yl.setAttribute('fill', '#888'); yl.setAttribute('font-size', '13');
+    yl.setAttribute('text-anchor', 'middle');
+    yl.setAttribute('transform', 'rotate(-90,' + 14 + ',' + (margin.top + ph/2) + ')');
+    yl.textContent = 'LOO Predicted';
+    svg.appendChild(yl);
+  }
+
+  // Axis ticks
+  var nTicks = isSmall ? 3 : 5;
+  var tickFontSize = isSmall ? '8' : '10';
+  for (var t = 0; t <= nTicks; t++) {
+    var v = lo + (hi - lo) * t / nTicks;
+    var xt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    xt.setAttribute('x', sx(v)); xt.setAttribute('y', margin.top + ph + (isSmall ? 12 : 16));
+    xt.setAttribute('fill', '#555'); xt.setAttribute('font-size', tickFontSize);
+    xt.setAttribute('text-anchor', 'middle'); xt.textContent = v.toFixed(isSmall ? 0 : 2);
+    svg.appendChild(xt);
+    var yt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    yt.setAttribute('x', margin.left - 4); yt.setAttribute('y', sy(v) + 3);
+    yt.setAttribute('fill', '#555'); yt.setAttribute('font-size', tickFontSize);
+    yt.setAttribute('text-anchor', 'end'); yt.textContent = v.toFixed(isSmall ? 0 : 2);
+    svg.appendChild(yt);
+    var gl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    gl.setAttribute('x1', margin.left); gl.setAttribute('x2', margin.left + pw);
+    gl.setAttribute('y1', sy(v)); gl.setAttribute('y2', sy(v));
+    gl.setAttribute('stroke', 'rgba(255,255,255,0.04)');
+    svg.appendChild(gl);
+  }
+
+  // R² annotation
+  var r2text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  r2text.setAttribute('x', margin.left + 6); r2text.setAttribute('y', margin.top + (isSmall ? 14 : 18));
+  r2text.setAttribute('fill', '#7c9aff'); r2text.setAttribute('font-size', isSmall ? '11' : '14');
+  r2text.setAttribute('font-weight', '600');
+  r2text.textContent = 'R\\u00B2 = ' + r2.toFixed(4);
+  svg.appendChild(r2text);
+
+  container.appendChild(svg);
+
+  // ── Highlighting ──
+  function findNearest(px, py) {
+    var best = -1, bestD = isSmall ? 8 : 12;
+    for (var i = 0; i < dots.length; i++) {
+      var dx = px - dots[i].cx, dy = py - dots[i].cy;
+      var d = Math.sqrt(dx*dx + dy*dy);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function highlightDots(activeIdx, rels) {
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      if (i === activeIdx) {
+        d.dot.setAttribute('fill', 'rgba(255,80,80,0.95)');
+        d.dot.setAttribute('stroke', 'rgba(255,255,255,1)');
+        d.dot.setAttribute('stroke-width', '2'); d.dot.setAttribute('r', d.dotR + 1);
+        d.whisker.setAttribute('stroke', 'rgba(255,80,80,0.5)');
+      } else {
+        var relNorm = rels.max > 0 ? rels.raw[i] / rels.max : 0;
+        var fa = Math.max(0.08, Math.min(0.90, Math.sqrt(relNorm)));
+        d.dot.setAttribute('fill', 'rgba(255,80,80,' + fa.toFixed(3) + ')');
+        d.dot.setAttribute('stroke', 'rgba(255,255,255,' + Math.max(0.15, fa * 0.6).toFixed(3) + ')');
+        d.dot.setAttribute('stroke-width', '1'); d.dot.setAttribute('r', d.dotR);
+        d.whisker.setAttribute('stroke', 'rgba(255,80,80,' + (fa * 0.35).toFixed(3) + ')');
+      }
+    }
+  }
+
+  function clearDots() {
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      d.dot.setAttribute('fill', 'rgba(124,154,255,0.85)');
+      d.dot.setAttribute('stroke', 'rgba(255,255,255,0.5)');
+      d.dot.setAttribute('stroke-width', '1'); d.dot.setAttribute('r', d.dotR);
+      d.whisker.setAttribute('stroke', 'rgba(124,154,255,0.3)');
+    }
+  }
+
+  plotPanels.push({ highlight: highlightDots, clear: clearDots });
+  var trainPts = dots.map(function(d) { return d.pt; });
+
+  container.addEventListener('mousemove', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var best = findNearest(px, py);
+    if (best >= 0) {
+      var d = dots[best];
+      var html = '<div class="tt-title">' + outcomeName + ' — trial ' + d.idx + '</div>' +
+        'observed = <span class="tt-val">' + d.obs.toFixed(4) + '</span><br>' +
+        'LOO predicted = <span class="tt-val">' + d.pred.toFixed(4) + '</span><br>' +
+        '\\u00B1 2\\u03C3 = [' + (d.pred - 2*d.std).toFixed(4) + ', ' + (d.pred + 2*d.std).toFixed(4) + ']<br>' +
+        buildParamTooltip(d.idx, trainPts);
+      showTooltip(tooltip, html, e.clientX, e.clientY);
+      if (cvPinnedIdx < 0) broadcastHighlight(best, computeRels(best, trainPts, outcomeName));
+    } else {
+      hideTooltip(tooltip);
+      if (cvPinnedIdx < 0) broadcastClear();
+    }
+  });
+
+  container.addEventListener('click', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var best = findNearest(px, py);
+    if (best >= 0) { cvPinnedIdx = best; broadcastHighlight(best, computeRels(best, trainPts, outcomeName)); }
+    else { broadcastClear(); }
+  });
+
+  container.addEventListener('mouseleave', function() {
+    hideTooltip(tooltip);
+    if (cvPinnedIdx < 0) broadcastClear();
+  });
+}
+
+// Render an optimization trace panel for one outcome.
+function renderTracePanel(outcomeName, container, W, H) {
+  var td = predictor.getTrainingData(outcomeName);
+  if (td.Y.length === 0) { container.textContent = 'No data'; return; }
+
+  var yVals = td.Y;
+  var trainX = td.X;
+  var n = yVals.length;
+
+  // Determine direction from optimization_config
+  var minimize = true;
+  if (fixture.optimization_config && fixture.optimization_config.objectives) {
+    var obj = fixture.optimization_config.objectives.find(function(o) { return o.name === outcomeName; });
+    if (obj) minimize = obj.minimize;
+  }
+
+  // Running best
+  var best = yVals[0];
+  var bestSoFar = yVals.map(function(y) {
+    if (minimize) { best = Math.min(best, y); }
+    else { best = Math.max(best, y); }
+    return best;
+  });
+
+  var yMin = Math.min.apply(null, yVals);
+  var yMax = Math.max.apply(null, yVals);
+  var yPad = 0.08 * (yMax - yMin || 1);
+  yMin -= yPad; yMax += yPad;
+
+  var margin = { top: 30, right: 20, bottom: 40, left: 55 };
+  var pw = W - margin.left - margin.right;
+  var ph = H - margin.top - margin.bottom;
+
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+
+  function sx(i) { return margin.left + (i / Math.max(1, n - 1)) * pw; }
+  function sy(v) { return margin.top + ph - (v - yMin) / (yMax - yMin) * ph; }
+
+  // Grid
+  var nTicks = 5;
+  for (var t = 0; t <= nTicks; t++) {
+    var v = yMin + (yMax - yMin) * t / nTicks;
+    var gl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    gl.setAttribute('x1', margin.left); gl.setAttribute('x2', margin.left + pw);
+    gl.setAttribute('y1', sy(v)); gl.setAttribute('y2', sy(v));
+    gl.setAttribute('stroke', 'rgba(255,255,255,0.05)');
+    svg.appendChild(gl);
+    var yt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    yt.setAttribute('x', margin.left - 8); yt.setAttribute('y', sy(v) + 4);
+    yt.setAttribute('fill', '#555'); yt.setAttribute('font-size', '10');
+    yt.setAttribute('text-anchor', 'end'); yt.textContent = v.toFixed(2);
+    svg.appendChild(yt);
+  }
+
+  // Best-so-far step line
+  var bsfPath = 'M ' + sx(0) + ' ' + sy(bestSoFar[0]);
+  for (var i = 1; i < n; i++) {
+    bsfPath += ' H ' + sx(i) + ' V ' + sy(bestSoFar[i]);
+  }
+  var bsfLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  bsfLine.setAttribute('d', bsfPath);
+  bsfLine.setAttribute('stroke', '#7c6ff7'); bsfLine.setAttribute('stroke-width', '2.5');
+  bsfLine.setAttribute('fill', 'none'); bsfLine.setAttribute('opacity', '0.7');
+  svg.appendChild(bsfLine);
+
+  // Dots
+  var dots = [];
+  for (var i = 0; i < n; i++) {
+    var isBest = bestSoFar[i] === yVals[i];
+    var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', sx(i)); dot.setAttribute('cy', sy(yVals[i]));
+    dot.setAttribute('r', '4');
+    dot.setAttribute('fill', isBest ? 'rgba(124,111,247,0.9)' : 'rgba(255,255,255,0.3)');
+    dot.setAttribute('stroke', isBest ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.15)');
+    dot.setAttribute('stroke-width', '1');
+    svg.appendChild(dot);
+    dots.push({ cx: parseFloat(dot.getAttribute('cx')), cy: parseFloat(dot.getAttribute('cy')),
+      idx: i, value: yVals[i], best: bestSoFar[i], isBest: isBest, pt: trainX[i], el: dot });
+  }
+
+  // Axis labels
+  var xl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  xl.setAttribute('x', margin.left + pw/2); xl.setAttribute('y', H - 6);
+  xl.setAttribute('fill', '#888'); xl.setAttribute('font-size', '13');
+  xl.setAttribute('text-anchor', 'middle'); xl.textContent = 'Trial';
+  svg.appendChild(xl);
+  var yl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  yl.setAttribute('x', 14); yl.setAttribute('y', margin.top + ph/2);
+  yl.setAttribute('fill', '#888'); yl.setAttribute('font-size', '13');
+  yl.setAttribute('text-anchor', 'middle');
+  yl.setAttribute('transform', 'rotate(-90,' + 14 + ',' + (margin.top + ph/2) + ')');
+  yl.textContent = outcomeName + (minimize ? ' (min)' : ' (max)');
+  svg.appendChild(yl);
+
+  // X ticks
+  var xStep = Math.max(1, Math.ceil(n / 10));
+  for (var i = 0; i < n; i += xStep) {
+    var xt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    xt.setAttribute('x', sx(i)); xt.setAttribute('y', margin.top + ph + 18);
+    xt.setAttribute('fill', '#555'); xt.setAttribute('font-size', '10');
+    xt.setAttribute('text-anchor', 'middle'); xt.textContent = String(i);
+    svg.appendChild(xt);
+  }
+
+  // Legend
+  var leg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  var lr = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  lr.setAttribute('x1', margin.left + pw - 120); lr.setAttribute('x2', margin.left + pw - 100);
+  lr.setAttribute('y1', margin.top + 12); lr.setAttribute('y2', margin.top + 12);
+  lr.setAttribute('stroke', '#7c6ff7'); lr.setAttribute('stroke-width', '2.5');
+  leg.appendChild(lr);
+  var lt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  lt.setAttribute('x', margin.left + pw - 96); lt.setAttribute('y', margin.top + 16);
+  lt.setAttribute('fill', '#888'); lt.setAttribute('font-size', '11');
+  lt.textContent = 'best so far';
+  leg.appendChild(lt);
+  svg.appendChild(leg);
+
+  container.appendChild(svg);
+
+  // ── Highlighting ──
+  function findNearest(px, py) {
+    var best = -1, bestD = 12;
+    for (var i = 0; i < dots.length; i++) {
+      var dx = px - dots[i].cx, dy = py - dots[i].cy;
+      var d = Math.sqrt(dx*dx + dy*dy);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function highlightDots(activeIdx, rels) {
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      if (i === activeIdx) {
+        d.el.setAttribute('fill', 'rgba(255,80,80,0.95)');
+        d.el.setAttribute('stroke', 'rgba(255,255,255,1)');
+        d.el.setAttribute('stroke-width', '2'); d.el.setAttribute('r', '6');
+      } else {
+        var relNorm = rels.max > 0 ? rels.raw[i] / rels.max : 0;
+        var fa = Math.max(0.08, Math.min(0.90, Math.sqrt(relNorm)));
+        d.el.setAttribute('fill', 'rgba(124,111,247,' + fa.toFixed(3) + ')');
+        d.el.setAttribute('stroke', 'rgba(255,255,255,' + Math.max(0.15, fa * 0.6).toFixed(3) + ')');
+        d.el.setAttribute('stroke-width', '1'); d.el.setAttribute('r', '4');
+      }
+    }
+  }
+
+  function clearDots() {
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      d.el.setAttribute('fill', d.isBest ? 'rgba(124,111,247,0.9)' : 'rgba(255,255,255,0.3)');
+      d.el.setAttribute('stroke', d.isBest ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.15)');
+      d.el.setAttribute('stroke-width', '1'); d.el.setAttribute('r', '4');
+    }
+  }
+
+  plotPanels.push({ highlight: highlightDots, clear: clearDots });
+
+  container.addEventListener('mousemove', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var best = findNearest(px, py);
+    if (best >= 0) {
+      var d = dots[best];
+      var html = '<div class="tt-title">trial ' + d.idx + '</div>' +
+        outcomeName + ' = <span class="tt-val">' + d.value.toFixed(4) + '</span><br>' +
+        'best so far = <span class="tt-val">' + d.best.toFixed(4) + '</span><br>' +
+        buildParamTooltip(d.idx, trainX);
+      showTooltip(tooltip, html, e.clientX, e.clientY);
+      container.style.cursor = 'pointer';
+      if (cvPinnedIdx < 0) broadcastHighlight(best, computeRels(best, trainX, outcomeName));
+    } else {
+      hideTooltip(tooltip);
+      container.style.cursor = 'crosshair';
+      if (cvPinnedIdx < 0) broadcastClear();
+    }
+  });
+
+  container.addEventListener('click', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var best = findNearest(px, py);
+    if (best >= 0) { cvPinnedIdx = best; broadcastHighlight(best, computeRels(best, trainX, outcomeName)); }
+    else { broadcastClear(); }
+  });
+
+  container.addEventListener('mouseleave', function() {
+    hideTooltip(tooltip);
+    if (cvPinnedIdx < 0) broadcastClear();
+  });
+}
+
+function render() {
+  var plotArea = document.getElementById('plotArea');
+  plotArea.innerHTML = '';
+  cvPinnedIdx = -1;
+  plotPanels = [];
+
+  // Pre-compute all outcome Y values for rich tooltips
+  allOutcomeY = {};
+  predictor.outcomeNames.forEach(function(name) {
+    allOutcomeY[name] = predictor.getTrainingData(name).Y;
+  });
+
+  if (selectedOutcome === '__all__') {
+    // Small multiples: 4 per row (LOO-CV only)
+    var names = predictor.outcomeNames;
+    var tileW = 280, tileH = 280;
+    names.forEach(function(name) {
+      var tile = document.createElement('div');
+      tile.className = 'cv-tile';
+      tile.style.width = tileW + 'px'; tile.style.height = (tileH + 28) + 'px';
+      var title = document.createElement('div');
+      title.className = 'cv-title'; title.textContent = name;
+      tile.appendChild(title);
+      renderCVPlot(name, tile, tileW, tileH);
+      plotArea.appendChild(tile);
+    });
+  } else {
+    // Side by side: LOO-CV + Optimization Trace
+    var tile = document.createElement('div');
+    tile.className = 'cv-tile';
+    tile.style.width = '440px'; tile.style.height = '468px';
+    var title = document.createElement('div');
+    title.className = 'cv-title'; title.textContent = selectedOutcome + ' — LOO-CV';
+    tile.appendChild(title);
+    renderCVPlot(selectedOutcome, tile, 440, 440);
+    plotArea.appendChild(tile);
+
+    var traceTile = document.createElement('div');
+    traceTile.className = 'cv-tile';
+    traceTile.style.width = '440px'; traceTile.style.height = '468px';
+    var traceTitle = document.createElement('div');
+    traceTitle.className = 'cv-title'; traceTitle.textContent = selectedOutcome + ' — Optimization Trace';
+    traceTile.appendChild(traceTitle);
+    renderTracePanel(selectedOutcome, traceTile, 440, 440);
+    plotArea.appendChild(traceTile);
+  }
+}
+
+outcomeSelect.addEventListener('change', function() { selectedOutcome = outcomeSelect.value; render(); });
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  var file = e.target.files[0]; if (!file) return;
+  file.text().then(function(text) { loadFixtureData(JSON.parse(text)); });
+});
+
+loadFixtureData(__DEFAULT_FIXTURE__);
+</script>
+</body>
+</html>`;
+
+// ─── Feature Importance ──────────────────────────────────────────────────────
+
+const featureImportance = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>axjs — Feature Importance</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f0f11; color: #e0e0e0; padding: 2rem; min-height: 100vh; }
+  h1 { font-size: 18px; font-weight: 500; color: #f0f0f0; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 16px; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  label { font-size: 13px; color: #aaa; }
+  select, input[type=file] { font-size: 13px; padding: 5px 10px;
+    border-radius: 6px; border: 0.5px solid #444; background: #1a1a1d; color: #e0e0e0; cursor: pointer; outline: none; }
+  .chart-container { max-width: 600px; }
+  .bar-row { display: flex; align-items: center; margin-bottom: 6px; }
+  .bar-label { width: 150px; font-size: 13px; color: #ccc; text-align: right; padding-right: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { flex: 1; height: 24px; background: #1a1a1d; border-radius: 4px; position: relative; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+  .bar-value { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    font-size: 11px; color: #ccc; font-weight: 500; }
+  .explanation { font-size: 12px; color: #666; margin-top: 16px; max-width: 600px; line-height: 1.5; }
+  .multi-outcome { display: flex; flex-wrap: wrap; gap: 24px; }
+  .outcome-col { flex: 1; min-width: 400px; }
+  .outcome-title { font-size: 14px; font-weight: 500; color: #aaa; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<h1>${axHomeLink}Feature Importance</h1>
+<div class="subtitle" id="subtitle">Relative importance from GP kernel lengthscales</div>
+<div class="controls">
+  <label>View: <select id="viewMode">
+    <option value="single">Single outcome</option>
+    <option value="all">All outcomes</option>
+  </select></label>
+  <label>Outcome: <select id="outcomeSelect"></select></label>
+  <label>File: <input type="file" id="fileInput" accept=".json"></label>
+</div>
+<div id="chart"></div>
+<div class="explanation">
+  Bars show <b>1 / lengthscale</b> — shorter kernel lengthscales mean the model is more
+  sensitive to that parameter. Importance is relative (normalized to the most important dimension).
+</div>
+${libraryScript()}
+${fixtureScript('__DEFAULT_FIXTURE__', penicillinFixture)}
+${sharedUtilsScript()}
+<script>
+var Predictor = axjs.Predictor;
+var predictor, fixture, selectedOutcome;
+var outcomeSelect = document.getElementById('outcomeSelect');
+var viewMode = document.getElementById('viewMode');
+
+var barColors = ['#7c6ff7','#6fa0f7','#6fcff7','#6ff7c8','#a0f76f','#f7e06f','#f7a06f','#f76f6f'];
+
+function loadFixtureData(data) {
+  fixture = normalizeFixture(data);
+  predictor = new Predictor(fixture);
+  outcomeSelect.innerHTML = '';
+  predictor.outcomeNames.forEach(function(name) {
+    var opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    outcomeSelect.appendChild(opt);
+  });
+  selectedOutcome = predictor.outcomeNames[0];
+  document.getElementById('subtitle').textContent =
+    (fixture.metadata.name || 'Fixture') + ' — ' + predictor.paramNames.length + ' parameters, ' +
+    predictor.outcomeNames.length + ' outcome' + (predictor.outcomeNames.length > 1 ? 's' : '');
+  render();
+}
+
+function renderBars(outcomeName, container) {
+  var ranked = predictor.rankDimensionsByImportance(outcomeName);
+  if (ranked.length === 0) { container.textContent = 'No lengthscale data'; return; }
+
+  // Importance = 1/ls, normalize to max
+  var importances = ranked.map(function(d) { return 1 / d.lengthscale; });
+  var maxImp = Math.max.apply(null, importances);
+
+  ranked.forEach(function(dim, i) {
+    var imp = importances[i];
+    var pct = (imp / maxImp * 100).toFixed(1);
+
+    var row = document.createElement('div'); row.className = 'bar-row';
+    var label = document.createElement('div'); label.className = 'bar-label';
+    label.textContent = dim.paramName;
+    var track = document.createElement('div'); track.className = 'bar-track';
+    var fill = document.createElement('div'); fill.className = 'bar-fill';
+    fill.style.width = pct + '%';
+    fill.style.background = barColors[dim.dimIndex % barColors.length];
+    var value = document.createElement('div'); value.className = 'bar-value';
+    value.textContent = 'ls=' + dim.lengthscale.toFixed(3);
+
+    track.appendChild(fill);
+    track.appendChild(value);
+    row.appendChild(label);
+    row.appendChild(track);
+    container.appendChild(row);
+  });
+}
+
+function render() {
+  var chart = document.getElementById('chart');
+  chart.innerHTML = '';
+
+  if (viewMode.value === 'all' && predictor.outcomeNames.length > 1) {
+    var wrap = document.createElement('div'); wrap.className = 'multi-outcome';
+    predictor.outcomeNames.forEach(function(name) {
+      var col = document.createElement('div'); col.className = 'outcome-col';
+      var title = document.createElement('div'); title.className = 'outcome-title';
+      title.textContent = name;
+      col.appendChild(title);
+      renderBars(name, col);
+      wrap.appendChild(col);
+    });
+    chart.appendChild(wrap);
+  } else {
+    var container = document.createElement('div'); container.className = 'chart-container';
+    renderBars(selectedOutcome, container);
+    chart.appendChild(container);
+  }
+}
+
+outcomeSelect.addEventListener('change', function() { selectedOutcome = outcomeSelect.value; render(); });
+viewMode.addEventListener('change', render);
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  var file = e.target.files[0]; if (!file) return;
+  file.text().then(function(text) { loadFixtureData(JSON.parse(text)); });
+});
+
+loadFixtureData(__DEFAULT_FIXTURE__);
+</script>
+</body>
+</html>`;
+
+// ─── Optimization Trace ──────────────────────────────────────────────────────
+
+const optimizationTrace = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>axjs — Optimization Trace</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f0f11; color: #e0e0e0; padding: 2rem; min-height: 100vh; }
+  h1 { font-size: 18px; font-weight: 500; color: #f0f0f0; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 16px; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  label { font-size: 13px; color: #aaa; }
+  select, input[type=file] { font-size: 13px; padding: 5px 10px;
+    border-radius: 6px; border: 0.5px solid #444; background: #1a1a1d; color: #e0e0e0; cursor: pointer; outline: none; }
+  .plot-container { width: 700px; height: 380px; background: #141418; border: 0.5px solid #222;
+    border-radius: 8px; overflow: hidden; position: relative; }
+  .no-data { display: flex; align-items: center; justify-content: center; height: 100%; color: #555; font-size: 14px;
+    flex-direction: column; gap: 8px; }
+  .no-data code { font-size: 12px; color: #666; }
+  #tooltip { position: fixed; background: rgba(20,20,24,0.95); border: 0.5px solid #444;
+    border-radius: 6px; padding: 8px 12px; font-size: 12px; pointer-events: none;
+    display: none; z-index: 100; max-width: 300px; }
+  .tt-title { font-weight: 600; color: #aaa; margin-bottom: 4px; }
+  .tt-val { color: #7c9aff; }
+</style>
+</head>
+<body>
+<h1>${axHomeLink}Optimization Trace</h1>
+<div class="subtitle" id="subtitle">Trial progression — load a fixture with observations</div>
+<div class="controls">
+  <label>Outcome: <select id="outcomeSelect"></select></label>
+  <label>Direction: <select id="dirSelect">
+    <option value="auto">Auto (from config)</option>
+    <option value="min">Minimize</option>
+    <option value="max">Maximize</option>
+  </select></label>
+  <label>File: <input type="file" id="fileInput" accept=".json"></label>
+</div>
+<div class="plot-container" id="plotContainer"></div>
+<div id="tooltip"></div>
+${libraryScript()}
+${fixtureScript('__DEFAULT_FIXTURE__', penicillinFixture)}
+${sharedUtilsScript()}
+<script>
+var Predictor = axjs.Predictor;
+var predictor, fixture, selectedOutcome;
+var pinnedIdx = -1;
+var tooltip = document.getElementById('tooltip');
+var outcomeSelect = document.getElementById('outcomeSelect');
+
+function loadFixtureData(data) {
+  fixture = normalizeFixture(data);
+  predictor = new Predictor(fixture);
+  outcomeSelect.innerHTML = '';
+  predictor.outcomeNames.forEach(function(name) {
+    var opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    outcomeSelect.appendChild(opt);
+  });
+  selectedOutcome = predictor.outcomeNames[0];
+  document.getElementById('subtitle').textContent =
+    (fixture.metadata.name || 'Fixture') + ' — optimization trace';
+  render();
+}
+
+function isMinimize(outcomeName) {
+  var sel = document.getElementById('dirSelect').value;
+  if (sel === 'min') return true;
+  if (sel === 'max') return false;
+  // Auto: check optimization_config
+  if (fixture.optimization_config && fixture.optimization_config.objectives) {
+    var obj = fixture.optimization_config.objectives.find(function(o) { return o.name === outcomeName; });
+    if (obj) return obj.minimize;
+  }
+  return true; // default minimize
+}
+
+function render() {
+  var container = document.getElementById('plotContainer');
+  container.innerHTML = '';
+  pinnedIdx = -1;
+
+  // Get training data for selected outcome
+  var td = predictor.getTrainingData(selectedOutcome);
+  if (td.Y.length === 0) {
+    container.innerHTML = '<div class="no-data">No data available</div>';
+    return;
+  }
+
+  // Pre-compute all outcome Y values for multi-outcome tooltips
+  var allOutcomeY = {};
+  predictor.outcomeNames.forEach(function(name) {
+    allOutcomeY[name] = predictor.getTrainingData(name).Y;
+  });
+
+  var trainX = td.X;
+  var paramNames = td.paramNames;
+  var params = fixture.search_space.parameters;
+
+  var trials = td.Y.map(function(y, i) { return { index: i, value: y }; });
+  var minimize = isMinimize(selectedOutcome);
+
+  // Compute running best
+  var best = trials[0].value;
+  var bestSoFar = trials.map(function(t) {
+    if (minimize) { best = Math.min(best, t.value); }
+    else { best = Math.max(best, t.value); }
+    return best;
+  });
+
+  var n = trials.length;
+  var yVals = trials.map(function(t) { return t.value; });
+  var yMin = Math.min.apply(null, yVals);
+  var yMax = Math.max.apply(null, yVals);
+  var yPad = 0.08 * (yMax - yMin || 1);
+  yMin -= yPad; yMax += yPad;
+
+  var W = 700, H = 380;
+  var margin = { top: 20, right: 20, bottom: 40, left: 60 };
+  var pw = W - margin.left - margin.right;
+  var ph = H - margin.top - margin.bottom;
+
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+
+  function sx(i) { return margin.left + (i / Math.max(1, n - 1)) * pw; }
+  function sy(v) { return margin.top + ph - (v - yMin) / (yMax - yMin) * ph; }
+
+  // Grid
+  var nTicks = 5;
+  for (var t = 0; t <= nTicks; t++) {
+    var v = yMin + (yMax - yMin) * t / nTicks;
+    var gl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    gl.setAttribute('x1', margin.left); gl.setAttribute('x2', margin.left + pw);
+    gl.setAttribute('y1', sy(v)); gl.setAttribute('y2', sy(v));
+    gl.setAttribute('stroke', 'rgba(255,255,255,0.05)');
+    svg.appendChild(gl);
+    var yt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    yt.setAttribute('x', margin.left - 8); yt.setAttribute('y', sy(v) + 4);
+    yt.setAttribute('fill', '#555'); yt.setAttribute('font-size', '10');
+    yt.setAttribute('text-anchor', 'end'); yt.textContent = v.toFixed(2);
+    svg.appendChild(yt);
+  }
+
+  // Best-so-far line (step function)
+  var bsfPath = 'M ' + sx(0) + ' ' + sy(bestSoFar[0]);
+  for (var i = 1; i < n; i++) {
+    bsfPath += ' H ' + sx(i) + ' V ' + sy(bestSoFar[i]);
+  }
+  var bsfLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  bsfLine.setAttribute('d', bsfPath);
+  bsfLine.setAttribute('stroke', '#7c6ff7'); bsfLine.setAttribute('stroke-width', '2.5');
+  bsfLine.setAttribute('fill', 'none'); bsfLine.setAttribute('opacity', '0.7');
+  svg.appendChild(bsfLine);
+
+  // Individual trial dots
+  var dotEls = [];
+  for (var i = 0; i < n; i++) {
+    var isBest = bestSoFar[i] === trials[i].value;
+    var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', sx(i)); dot.setAttribute('cy', sy(trials[i].value));
+    dot.setAttribute('r', '4');
+    dot.setAttribute('fill', isBest ? 'rgba(124,111,247,0.9)' : 'rgba(255,255,255,0.3)');
+    dot.setAttribute('stroke', isBest ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.15)');
+    dot.setAttribute('stroke-width', '1');
+    svg.appendChild(dot);
+    dotEls.push({ cx: parseFloat(dot.getAttribute('cx')), cy: parseFloat(dot.getAttribute('cy')),
+      idx: i, value: trials[i].value, best: bestSoFar[i], isBest: isBest,
+      pt: trainX[i], el: dot });
+  }
+
+  // Axis labels
+  var xl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  xl.setAttribute('x', margin.left + pw/2); xl.setAttribute('y', H - 6);
+  xl.setAttribute('fill', '#888'); xl.setAttribute('font-size', '13');
+  xl.setAttribute('text-anchor', 'middle'); xl.textContent = 'Trial';
+  svg.appendChild(xl);
+  var yl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  yl.setAttribute('x', 14); yl.setAttribute('y', margin.top + ph/2);
+  yl.setAttribute('fill', '#888'); yl.setAttribute('font-size', '13');
+  yl.setAttribute('text-anchor', 'middle');
+  yl.setAttribute('transform', 'rotate(-90,' + 14 + ',' + (margin.top + ph/2) + ')');
+  yl.textContent = selectedOutcome + (minimize ? ' (minimize)' : ' (maximize)');
+  svg.appendChild(yl);
+
+  // X ticks
+  var xStep = Math.max(1, Math.ceil(n / 10));
+  for (var i = 0; i < n; i += xStep) {
+    var xt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    xt.setAttribute('x', sx(i)); xt.setAttribute('y', margin.top + ph + 18);
+    xt.setAttribute('fill', '#555'); xt.setAttribute('font-size', '10');
+    xt.setAttribute('text-anchor', 'middle'); xt.textContent = String(i);
+    svg.appendChild(xt);
+  }
+
+  // Legend
+  var leg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  var lr = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  lr.setAttribute('x1', margin.left + pw - 120); lr.setAttribute('x2', margin.left + pw - 100);
+  lr.setAttribute('y1', margin.top + 12); lr.setAttribute('y2', margin.top + 12);
+  lr.setAttribute('stroke', '#7c6ff7'); lr.setAttribute('stroke-width', '2.5');
+  leg.appendChild(lr);
+  var lt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  lt.setAttribute('x', margin.left + pw - 96); lt.setAttribute('y', margin.top + 16);
+  lt.setAttribute('fill', '#888'); lt.setAttribute('font-size', '11');
+  lt.textContent = 'best so far';
+  leg.appendChild(lt);
+  svg.appendChild(leg);
+
+  container.appendChild(svg);
+
+  // ── Neighbor highlighting ──
+  function findNearest(px, py) {
+    var best = -1, bestD = 12;
+    for (var i = 0; i < dotEls.length; i++) {
+      var dx = px - dotEls[i].cx, dy = py - dotEls[i].cy;
+      var d = Math.sqrt(dx*dx + dy*dy);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function highlightNeighbors(activeIdx) {
+    var active = dotEls[activeIdx];
+    var rawRels = [], maxRel = 0;
+    for (var i = 0; i < dotEls.length; i++) {
+      if (i === activeIdx) { rawRels.push(1); continue; }
+      var r = predictor.kernelCorrelation(dotEls[i].pt, active.pt, selectedOutcome);
+      rawRels.push(r);
+      if (r > maxRel) maxRel = r;
+    }
+    for (var i = 0; i < dotEls.length; i++) {
+      var d = dotEls[i];
+      if (i === activeIdx) {
+        d.el.setAttribute('fill', 'rgba(255,80,80,0.95)');
+        d.el.setAttribute('stroke', 'rgba(255,255,255,1)');
+        d.el.setAttribute('stroke-width', '2'); d.el.setAttribute('r', '6');
+      } else {
+        var relNorm = maxRel > 0 ? rawRels[i] / maxRel : 0;
+        var fa = Math.max(0.08, Math.min(0.90, Math.sqrt(relNorm)));
+        d.el.setAttribute('fill', 'rgba(124,111,247,' + fa.toFixed(3) + ')');
+        d.el.setAttribute('stroke', 'rgba(255,255,255,' + Math.max(0.15, fa * 0.6).toFixed(3) + ')');
+        d.el.setAttribute('stroke-width', '1'); d.el.setAttribute('r', '4');
+      }
+    }
+  }
+
+  function clearHighlight() {
+    for (var i = 0; i < dotEls.length; i++) {
+      var d = dotEls[i];
+      d.el.setAttribute('fill', d.isBest ? 'rgba(124,111,247,0.9)' : 'rgba(255,255,255,0.3)');
+      d.el.setAttribute('stroke', d.isBest ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.15)');
+      d.el.setAttribute('stroke-width', '1'); d.el.setAttribute('r', '4');
+    }
+    pinnedIdx = -1;
+  }
+
+  function buildTooltip(d) {
+    var html = '<div class="tt-title">trial ' + d.idx + '</div>';
+    // All outcomes
+    predictor.outcomeNames.forEach(function(name) {
+      var yArr = allOutcomeY[name];
+      if (!yArr || d.idx >= yArr.length) return;
+      var isSel = name === selectedOutcome;
+      html += (isSel ? '<b>' : '<span style="color:#888">') +
+        name + ' = <span class="tt-val">' + yArr[d.idx].toFixed(4) + '</span>' +
+        (isSel ? '</b>' : '</span>') + '<br>';
+    });
+    html += 'best so far = <span class="tt-val">' + d.best.toFixed(4) + '</span>';
+    // Parameters
+    html += '<hr style="border-color:#333;margin:4px 0">';
+    paramNames.forEach(function(name, j) {
+      html += '<span style="color:#888">' + name + '</span> = ' +
+        formatParamValue(d.pt[j], params[j]) + '<br>';
+    });
+    return html;
+  }
+
+  container.addEventListener('mousemove', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var best = findNearest(px, py);
+    if (best >= 0) {
+      showTooltip(tooltip, buildTooltip(dotEls[best]), e.clientX, e.clientY);
+      container.style.cursor = 'pointer';
+      if (pinnedIdx < 0) highlightNeighbors(best);
+    } else {
+      hideTooltip(tooltip);
+      container.style.cursor = 'crosshair';
+      if (pinnedIdx < 0) clearHighlight();
+    }
+  });
+
+  container.addEventListener('click', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var best = findNearest(px, py);
+    if (best >= 0) { pinnedIdx = best; highlightNeighbors(best); }
+    else { clearHighlight(); }
+  });
+
+  container.addEventListener('mouseleave', function() {
+    hideTooltip(tooltip);
+    if (pinnedIdx < 0) clearHighlight();
+  });
+}
+
+outcomeSelect.addEventListener('change', function() { selectedOutcome = outcomeSelect.value; render(); });
+document.getElementById('dirSelect').addEventListener('change', render);
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  var file = e.target.files[0]; if (!file) return;
+  file.text().then(function(text) { loadFixtureData(JSON.parse(text)); });
+});
+
+loadFixtureData(__DEFAULT_FIXTURE__);
+</script>
+</body>
+</html>`;
+
+// ─── Bayesian Optimization ───────────────────────────────────────────────────
+
+const bayesianOptimization = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>axjs — Bayesian Optimization</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f0f11; color: #e0e0e0;
+    padding: 2rem; min-height: 100vh;
+  }
+  h1 { font-size: 18px; font-weight: 500; color: #f0f0f0; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 16px; }
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+  button {
+    font-size: 13px; padding: 6px 16px;
+    border-radius: 6px; border: 0.5px solid #444;
+    background: #1a1a1d; color: #e0e0e0; cursor: pointer; outline: none;
+  }
+  select {
+    font-size: 13px; padding: 5px 10px;
+    border-radius: 6px; border: 0.5px solid #444;
+    background: #1a1a1d; color: #e0e0e0; cursor: pointer; outline: none;
+  }
+  button:hover, select:hover { background: #252528; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .status { font-size: 13px; color: #888; }
+  .status span { font-weight: 500; color: #ccc; }
+  .plots { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .plot { display: flex; flex-direction: column; gap: 6px; }
+  .plot-title { font-size: 12px; color: #888; text-align: center; letter-spacing: 0.04em; }
+  .canvas-wrap { position: relative; display: inline-block; }
+  canvas.main {
+    display: block; border-radius: 6px;
+    border: 0.5px solid #333; cursor: crosshair;
+  }
+  canvas.overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .cbrow { display: flex; align-items: center; gap: 6px; }
+  .cblbl { font-size: 11px; color: #666; min-width: 40px; }
+  canvas.cbar { height: 16px; flex: 1; border-radius: 4px; }
+  .info { font-size: 13px; color: #777; margin-top: 14px; line-height: 1.8; }
+  .info span { font-weight: 500; color: #ccc; }
+  .statline { font-size: 13px; color: #777; margin-top: 14px; min-height: 1.5em; }
+  .statline span { font-weight: 500; color: #ddd; }
+  .legend { display: flex; gap: 16px; margin-top: 10px; font-size: 12px; color: #777; }
+  .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  #tooltip {
+    position: fixed; display: none;
+    background: #1e1e22; border: 0.5px solid #555;
+    border-radius: 7px; padding: 9px 13px;
+    font-size: 12px; color: #ccc;
+    pointer-events: none; z-index: 100;
+    line-height: 1.8; white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  #tooltip .tt-title {
+    font-size: 11px; color: #888; letter-spacing: 0.05em;
+    text-transform: uppercase; margin-bottom: 4px;
+  }
+  #tooltip .tt-val { color: #ff6b6b; font-weight: 500; }
+  #tooltip .tt-coord { color: #a0c4ff; }
+</style>
+</head>
+<body>
+
+<h1>${axHomeLink}Bayesian Optimization</h1>
+<p class="subtitle">Thompson Sampling (2D) - ScaleKernel(RBF) - GP fitted via MAP</p>
+
+<div class="controls">
+  <select id="selProblem">
+    <option value="branin" selected>Branin</option>
+    <option value="camel">Six-Hump Camel</option>
+    <option value="ackley">Ackley</option>
+    <option value="rosenbrock">Rosenbrock</option>
+  </select>
+  <button id="btnStep">Iterate</button>
+  <button id="btnRun">Run All</button>
+  <button id="btnReset" style="color:#888">Reset</button>
+  <span class="status" id="status">Click Iterate to step through, or Run All for animation</span>
+</div>
+
+<div class="plots">
+  <div class="plot">
+    <div class="plot-title">true function (Branin)</div>
+    <canvas id="cvT" class="main" width="320" height="320"></canvas>
+    <div class="cbrow">
+      <span class="cblbl" id="tlo">--</span>
+      <canvas id="cbT" class="cbar"></canvas>
+      <span class="cblbl" id="thi" style="text-align:right">--</span>
+    </div>
+  </div>
+  <div class="plot">
+    <div class="plot-title">posterior mean</div>
+    <div class="canvas-wrap">
+      <canvas id="cvM" class="main" width="320" height="320"></canvas>
+      <canvas id="ovM" class="overlay" width="320" height="320"></canvas>
+    </div>
+    <div class="cbrow">
+      <span class="cblbl" id="mlo">--</span>
+      <canvas id="cbM" class="cbar"></canvas>
+      <span class="cblbl" id="mhi" style="text-align:right">--</span>
+    </div>
+  </div>
+  <div class="plot">
+    <div class="plot-title">predictive std</div>
+    <div class="canvas-wrap">
+      <canvas id="cvS" class="main" width="320" height="320"></canvas>
+      <canvas id="ovS" class="overlay" width="320" height="320"></canvas>
+    </div>
+    <div class="cbrow">
+      <span class="cblbl">0.00</span>
+      <canvas id="cbS" class="cbar"></canvas>
+      <span class="cblbl" id="shi" style="text-align:right">--</span>
+    </div>
+  </div>
+  <div class="plot">
+    <div class="plot-title">LOO cross-validation</div>
+    <canvas id="cvLOO" class="main" width="320" height="320"></canvas>
+    <div class="loo-stats" id="looStats" style="font-size:11px;color:#777;margin-top:4px;text-align:center;">--</div>
+  </div>
+  <div class="plot">
+    <div class="plot-title">optimization trace</div>
+    <div id="traceContainer" style="width:320px;height:320px;background:#111;border-radius:6px;border:0.5px solid #333;position:relative;overflow:hidden;"></div>
+  </div>
+</div>
+
+<div id="tooltip"><div class="tt-title" id="tt-title"></div><div id="tt-body"></div></div>
+
+<div class="legend">
+  <span><span class="legend-dot" style="background:#fff"></span>initial points</span>
+  <span><span class="legend-dot" style="background:#6f6"></span>BO points</span>
+  <span><span class="legend-dot" style="background:#f44"></span>latest</span>
+  <span><span class="legend-dot" style="background:#ff0; border:1px solid #aa0"></span>global minima</span>
+</div>
+<div class="statline" id="statline">hover over posterior maps to inspect</div>
+<div class="info" id="info"></div>
+
+${libraryScript()}
+${sharedColormapScript()}
+
+<script>
+var loadModel = axjs.loadModel;
+var Predictor = axjs.Predictor;
+var CN = 320, GS = 60;
+var N_CAND = 1000, N_FEAT = 256, N_ITER = 50, N_INIT = 3, DELAY_MS = 100;
+var running = false;
+
+// ── Test Functions (all rescaled to [0,1]^2) ──
+var PROBLEMS = {
+  branin: {
+    name: 'Branin',
+    fn: function(x0, x1) {
+      var X0 = 15*x0 - 5, X1 = 15*x1;
+      var b = 5.1/(4*Math.PI*Math.PI), c = 5/Math.PI, t = 1/(8*Math.PI);
+      return Math.pow(X1 - b*X0*X0 + c*X0 - 6, 2) + 10*(1-t)*Math.cos(X0) + 10;
+    },
+    optima: [[0.5428, 0.1517], [0.1239, 0.8183], [0.9617, 0.1650]],
+    fmin: 0.397887
+  },
+  camel: {
+    name: 'Six-Hump Camel',
+    fn: function(x0, x1) {
+      // Domain: x1 in [-3,3], x2 in [-2,2] -> rescale from [0,1]
+      var X0 = 6*x0 - 3, X1 = 4*x1 - 2;
+      return (4 - 2.1*X0*X0 + X0*X0*X0*X0/3)*X0*X0 + X0*X1 + (-4 + 4*X1*X1)*X1*X1;
+    },
+    optima: [[(0.0898+3)/6, (-0.7126+2)/4], [(-0.0898+3)/6, (0.7126+2)/4]],
+    fmin: -1.0316
+  },
+  ackley: {
+    name: 'Ackley',
+    fn: function(x0, x1) {
+      // Domain: [-5,5]^2 -> rescale from [0,1]
+      var X0 = 10*x0 - 5, X1 = 10*x1 - 5;
+      return -20*Math.exp(-0.2*Math.sqrt(0.5*(X0*X0+X1*X1)))
+             - Math.exp(0.5*(Math.cos(2*Math.PI*X0)+Math.cos(2*Math.PI*X1)))
+             + Math.E + 20;
+    },
+    optima: [[0.5, 0.5]],
+    fmin: 0
+  },
+  rosenbrock: {
+    name: 'Rosenbrock',
+    fn: function(x0, x1) {
+      // Domain: [-2,2]^2 -> rescale from [0,1]
+      var X0 = 4*x0 - 2, X1 = 4*x1 - 2;
+      return (1-X0)*(1-X0) + 100*(X1-X0*X0)*(X1-X0*X0);
+    },
+    optima: [[(1+2)/4, (1+2)/4]],  // (1,1) in raw space
+    fmin: 0
+  }
+};
+
+var curProblem = PROBLEMS.branin;
+
+// ── PRNG (xoshiro128**) ──
+function Rng(seed) {
+  var s = new Uint32Array(4);
+  for (var i = 0; i < 4; i++) {
+    seed += 0x9e3779b9;
+    var t = seed;
+    t = Math.imul(t ^ (t >>> 16), 0x21f0aaad);
+    t = Math.imul(t ^ (t >>> 15), 0x735a2d97);
+    s[i] = (t ^ (t >>> 15)) >>> 0;
+  }
+  this.s = s;
+}
+Rng.prototype.uniform = function() {
+  var s = this.s, r = s[0] + s[3], t = s[1] << 9;
+  s[2] ^= s[0]; s[3] ^= s[1]; s[1] ^= s[2]; s[0] ^= s[3]; s[2] ^= t;
+  s[3] = (s[3] << 11) | (s[3] >>> 21);
+  return (r >>> 0) / 4294967296;
+};
+Rng.prototype.randn = function() {
+  var u1 = this.uniform(), u2 = this.uniform();
+  return Math.sqrt(-2*Math.log(u1+1e-300)) * Math.cos(2*Math.PI*u2);
+};
+
+// ── Cholesky utilities (flat Float64Array, n×n) ──
+function cholRaw(K, n, jitter) {
+  var L = new Float64Array(n*n);
+  for (var i = 0; i < n; i++) {
+    for (var j = 0; j <= i; j++) {
+      var s = K[i*n+j]; if (i===j) s += jitter;
+      for (var k = 0; k < j; k++) s -= L[i*n+k]*L[j*n+k];
+      if (i===j) { if (s<=0) return null; L[i*n+j] = Math.sqrt(s); }
+      else L[i*n+j] = s / L[j*n+j];
+    }
+  }
+  return L;
+}
+function chol(K, n) {
+  var r = cholRaw(K, n, 0); if (r) return r;
+  var jit = [1e-6,1e-5,1e-4,1e-3];
+  for (var i = 0; i < jit.length; i++) { r = cholRaw(K, n, jit[i]); if (r) return r; }
+  return null;
+}
+function cholSolve(L, b, n) {
+  var y = new Float64Array(n);
+  for (var i = 0; i < n; i++) { var s=b[i]; for (var j=0;j<i;j++) s-=L[i*n+j]*y[j]; y[i]=s/L[i*n+i]; }
+  var x = new Float64Array(n);
+  for (var i=n-1; i>=0; i--) { var s=y[i]; for (var j=i+1;j<n;j++) s-=L[j*n+i]*x[j]; x[i]=s/L[i*n+i]; }
+  return x;
+}
+
+// ── MLL + gradient for ScaleKernel(RBF) ──
+function mllGrad(X, Y, p) {
+  // p = [log_os, log_ls0, log_ls1, log_nv, mean]
+  var n = X.length, os = Math.exp(p[0]);
+  var ls0 = Math.exp(p[1]), ls1 = Math.exp(p[2]);
+  var nv = Math.exp(p[3]), mc = p[4];
+  // Kernel matrix K = os*RBF + nv*I
+  var Krbf = new Float64Array(n*n), K = new Float64Array(n*n);
+  // Store per-dim squared diffs for gradient
+  var D0 = new Float64Array(n*n), D1 = new Float64Array(n*n);
+  for (var i = 0; i < n; i++) {
+    for (var j = i; j < n; j++) {
+      var d0 = (X[i][0]-X[j][0])/ls0, d1 = (X[i][1]-X[j][1])/ls1;
+      var kr = Math.exp(-0.5*(d0*d0+d1*d1));
+      Krbf[i*n+j]=kr; Krbf[j*n+i]=kr;
+      D0[i*n+j]=d0*d0; D0[j*n+i]=d0*d0;
+      D1[i*n+j]=d1*d1; D1[j*n+i]=d1*d1;
+      var kv = os*kr;
+      K[i*n+j]=kv; K[j*n+i]=kv;
+    }
+    K[i*n+i] += nv;
+  }
+  var L = chol(K, n);
+  if (!L) return {mll:-1e10, grad:new Float64Array(5)};
+  // alpha = K^-1 (y - m)
+  var r = new Float64Array(n);
+  for (var i=0;i<n;i++) r[i] = Y[i] - mc;
+  var alpha = cholSolve(L, r, n);
+  // log MLL
+  var mll = -0.5*n*Math.log(2*Math.PI);
+  for (var i=0;i<n;i++) { mll -= 0.5*r[i]*alpha[i]; mll -= Math.log(L[i*n+i]); }
+  // K^-1 for gradient
+  var Ki = new Float64Array(n*n);
+  for (var c=0;c<n;c++) {
+    var e = new Float64Array(n); e[c]=1;
+    var x = cholSolve(L,e,n);
+    for (var rr=0;rr<n;rr++) Ki[rr*n+c]=x[rr];
+  }
+  // W = alpha*alpha^T - K^-1
+  var W = new Float64Array(n*n);
+  for (var i=0;i<n;i++) for (var j=0;j<n;j++) W[i*n+j] = alpha[i]*alpha[j] - Ki[i*n+j];
+  // Gradients
+  var g = new Float64Array(5);
+  for (var i=0;i<n;i++) for (var j=0;j<n;j++) {
+    var w = W[i*n+j], kr = Krbf[i*n+j];
+    g[0] += w * os * kr;         // d/d log(os)
+    g[1] += w * os * kr * D0[i*n+j]; // d/d log(ls0)
+    g[2] += w * os * kr * D1[i*n+j]; // d/d log(ls1)
+  }
+  g[0]*=0.5; g[1]*=0.5; g[2]*=0.5;
+  var trW = 0; for (var i=0;i<n;i++) trW += W[i*n+i];
+  g[3] = 0.5*nv*trW;
+  for (var i=0;i<n;i++) g[4] += alpha[i]; // d/d mean
+  // MAP priors (log-normal, matching BoTorch defaults)
+  // Noise prior: centered at log(1e-4), sigma=1
+  var nvTarget = Math.log(1e-4);
+  mll += -0.5*(p[3]-nvTarget)*(p[3]-nvTarget);
+  g[3] += -(p[3]-nvTarget);
+  // Lengthscale prior: centered at log(0.3), sigma=1
+  var lsTarget = Math.log(0.3);
+  for (var d=0;d<2;d++) {
+    mll += -0.5*(p[1+d]-lsTarget)*(p[1+d]-lsTarget);
+    g[1+d] += -(p[1+d]-lsTarget);
+  }
+  // Outputscale prior: centered at 0 (=log(1)), sigma=1.5
+  mll += -0.5*p[0]*p[0]/(1.5*1.5);
+  g[0] += -p[0]/(1.5*1.5);
+  return {mll:mll, grad:g};
+}
+
+// ── Fit GP hyperparameters via multi-restart Adam on MAP ──
+function fitGP(X, rawY) {
+  var n = rawY.length, ymean = 0;
+  for (var i=0;i<n;i++) ymean += rawY[i];
+  ymean /= n;
+  var yvar = 0;
+  for (var i=0;i<n;i++) yvar += (rawY[i]-ymean)*(rawY[i]-ymean);
+  var ystd = Math.sqrt(yvar/Math.max(n-1,1));
+  if (ystd < 1e-8) ystd = 1;
+  var Y = new Float64Array(n);
+  for (var i=0;i<n;i++) Y[i] = (rawY[i]-ymean)/ystd;
+  // Multi-restart: 4 different initializations
+  var inits = [
+    [0, Math.log(0.5), Math.log(0.5), -5, 0],
+    [0, Math.log(0.1), Math.log(0.1), -8, 0],
+    [1, Math.log(0.3), Math.log(0.3), -6, 0],
+    [-0.5, Math.log(0.15), Math.log(0.15), -9, 0]
+  ];
+  var bestMll = -Infinity, bestP = inits[0];
+  for (var r = 0; r < inits.length; r++) {
+    var p = inits[r].slice();
+    var m = new Float64Array(5), v = new Float64Array(5);
+    var lr = 0.05, b1 = 0.9, b2 = 0.999, eps = 1e-8;
+    for (var step = 0; step < 200; step++) {
+      var res = mllGrad(X, Y, p);
+      for (var i = 0; i < 5; i++) {
+        m[i] = b1*m[i] + (1-b1)*res.grad[i];
+        v[i] = b2*v[i] + (1-b2)*res.grad[i]*res.grad[i];
+        var mh = m[i]/(1-Math.pow(b1,step+1));
+        var vh = v[i]/(1-Math.pow(b2,step+1));
+        p[i] += lr * mh / (Math.sqrt(vh)+eps);
+      }
+      p[0] = Math.max(-5, Math.min(5, p[0]));
+      p[1] = Math.max(-4, Math.min(2, p[1]));
+      p[2] = Math.max(-4, Math.min(2, p[2]));
+      p[3] = Math.max(-12, Math.min(0, p[3]));
+    }
+    var finalMll = mllGrad(X, Y, p).mll;
+    if (finalMll > bestMll) { bestMll = finalMll; bestP = p.slice(); }
+  }
+  return {
+    os: Math.exp(bestP[0]), ls: [Math.exp(bestP[1]),Math.exp(bestP[2])],
+    nv: Math.exp(bestP[3]), mc: bestP[4], ymean: ymean, ystd: ystd
+  };
+}
+
+// ── RFF-based Thompson Sampling ──
+function thompsonSampleRFF(X, hp, rng) {
+  var n = X.length, D = N_FEAT;
+  // Standardize Y is already done — we store yStd as hp.yStd
+  var yStd = hp.yStd;
+  // Sample random features for RBF kernel
+  var omega0 = new Float64Array(D), omega1 = new Float64Array(D);
+  var bias = new Float64Array(D);
+  for (var j=0;j<D;j++) {
+    omega0[j] = rng.randn() / hp.ls[0];
+    omega1[j] = rng.randn() / hp.ls[1];
+    bias[j] = rng.uniform() * 2 * Math.PI;
+  }
+  var scale = Math.sqrt(2*hp.os/D);
+  // Feature function
+  function phi(pts) {
+    var m = pts.length, F = new Float64Array(m*D);
+    for (var i=0;i<m;i++) for (var j=0;j<D;j++) {
+      F[i*D+j] = scale * Math.cos(omega0[j]*pts[i][0] + omega1[j]*pts[i][1] + bias[j]);
+    }
+    return F;
+  }
+  var PhiX = phi(X);
+  // A = Phi^T Phi / nv + I  (D×D)
+  var A = new Float64Array(D*D);
+  for (var i=0;i<D;i++) {
+    for (var j=0;j<=i;j++) {
+      var s=0; for (var k=0;k<n;k++) s += PhiX[k*D+i]*PhiX[k*D+j];
+      s /= hp.nv; A[i*D+j]=s; A[j*D+i]=s;
+    }
+    A[i*D+i] += 1;
+  }
+  var LA = chol(A, D);
+  if (!LA) return null;
+  // b = Phi^T (y-m) / nv
+  var b = new Float64Array(D);
+  for (var j=0;j<D;j++) { var s=0; for (var k=0;k<n;k++) s += PhiX[k*D+j]*(yStd[k]-hp.mc); b[j]=s/hp.nv; }
+  var muTh = cholSolve(LA, b, D);
+  // Sample: theta* = mu + L_A^{-T} z
+  var z = new Float64Array(D); for (var j=0;j<D;j++) z[j]=rng.randn();
+  var v = new Float64Array(D);
+  for (var i=D-1;i>=0;i--) { var s=z[i]; for (var j=i+1;j<D;j++) s-=LA[j*D+i]*v[j]; v[i]=s/LA[i*D+i]; }
+  var theta = new Float64Array(D);
+  for (var j=0;j<D;j++) theta[j] = muTh[j] + v[j];
+  // Generate candidates and evaluate TS function
+  var cands = [];
+  for (var i=0;i<N_CAND;i++) cands.push([rng.uniform(), rng.uniform()]);
+  var PhiC = phi(cands);
+  var bestIdx=0, bestVal=Infinity;
+  for (var i=0;i<N_CAND;i++) {
+    var f = hp.mc;
+    for (var j=0;j<D;j++) f += theta[j]*PhiC[i*D+j];
+    if (f < bestVal) { bestVal=f; bestIdx=i; } // minimize
+  }
+  return cands[bestIdx];
+}
+
+// ── Build GPModelState for axjs ──
+function buildModelState(X, rawY, hp) {
+  var yStd = [];
+  for (var i=0;i<rawY.length;i++) yStd.push((rawY[i]-hp.ymean)/hp.ystd);
+  return {
+    model_type: "SingleTaskGP",
+    train_X: X,
+    train_Y: yStd,
+    kernel: { type: "Scale", outputscale: hp.os, base_kernel: { type: "RBF", lengthscale: hp.ls } },
+    mean_constant: hp.mc,
+    noise_variance: hp.nv,
+    input_transform: { offset: [0,0], coefficient: [1,1] },
+    outcome_transform: { type: "Standardize", mean: hp.ymean, std: hp.ystd }
+  };
+}
+
+// ── Rendering ──
+var ctxT = document.getElementById('cvT').getContext('2d');
+var ctxM = document.getElementById('cvM').getContext('2d');
+var ctxS = document.getElementById('cvS').getContext('2d');
+var ctxOM = document.getElementById('ovM').getContext('2d');
+var ctxOS = document.getElementById('ovS').getContext('2d');
+var ctxLOO = document.getElementById('cvLOO').getContext('2d');
+
+// Precompute true function on grid
+var trueVals, trueMin, trueMax, trueRange;
+function precomputeTrueFunction() {
+  trueVals = new Float64Array(GS*GS);
+  trueMin = Infinity; trueMax = -Infinity;
+  for (var gj=0;gj<GS;gj++) for (var gi=0;gi<GS;gi++) {
+    var v = curProblem.fn(gi/(GS-1), 1-gj/(GS-1));
+    trueVals[gj*GS+gi] = v;
+    if (v<trueMin) trueMin=v; if (v>trueMax) trueMax=v;
+  }
+  trueRange = trueMax-trueMin||1;
+}
+precomputeTrueFunction();
+
+function renderHeatmap(ctx, vals, vmin, vrange, cfn) {
+  var img = ctx.createImageData(CN, CN);
+  var cellW = CN/GS, cellH = CN/GS;
+  for (var k=0;k<vals.length;k++) {
+    var gi=k%GS, gj=Math.floor(k/GS);
+    var t = Math.max(0, Math.min(1, (vals[k]-vmin)/vrange));
+    var rgb = cfn(t);
+    var x0=Math.round(gi*cellW), y0=Math.round(gj*cellH);
+    var x1=Math.round((gi+1)*cellW), y1=Math.round((gj+1)*cellH);
+    for (var py=y0;py<y1;py++) for (var px=x0;px<x1;px++) {
+      var idx=(py*CN+px)*4;
+      img.data[idx]=rgb[0]; img.data[idx+1]=rgb[1]; img.data[idx+2]=rgb[2]; img.data[idx+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+}
+
+// Draw optima stars and training points on the TRUE function canvas only
+function drawTrueOverlay(X, nInit, latest) {
+  ctxT.clearRect(0,0,CN,CN);
+  renderHeatmap(ctxT, trueVals, trueMin, trueRange, viridis);
+  // Global minima stars
+  for (var i=0;i<curProblem.optima.length;i++) {
+    var px=curProblem.optima[i][0]*CN, py=(1-curProblem.optima[i][1])*CN;
+    ctxT.save(); ctxT.translate(px,py); ctxT.beginPath();
+    for (var k=0;k<5;k++) {
+      var a = -Math.PI/2 + k*2*Math.PI/5, b2 = a + Math.PI/5;
+      ctxT.lineTo(5*Math.cos(a), 5*Math.sin(a));
+      ctxT.lineTo(2*Math.cos(b2), 2*Math.sin(b2));
+    }
+    ctxT.closePath();
+    ctxT.fillStyle='rgba(255,255,0,0.7)'; ctxT.fill();
+    ctxT.strokeStyle='rgba(170,170,0,0.9)'; ctxT.lineWidth=0.8; ctxT.stroke();
+    ctxT.restore();
+  }
+  // Training points
+  for (var i=0;i<X.length;i++) {
+    var px=X[i][0]*CN, py=(1-X[i][1])*CN;
+    ctxT.beginPath(); ctxT.arc(px,py, i===latest?5:3.5, 0, 2*Math.PI);
+    if (i<nInit) ctxT.fillStyle='rgba(255,255,255,0.9)';
+    else if (i===latest) ctxT.fillStyle='#ff4444';
+    else ctxT.fillStyle='rgba(100,255,100,0.85)';
+    ctxT.fill();
+    ctxT.strokeStyle='rgba(0,0,0,0.6)'; ctxT.lineWidth=1; ctxT.stroke();
+  }
+  // Axis labels
+  ctxT.font='10px sans-serif'; ctxT.fillStyle='rgba(255,255,255,0.4)';
+  for (var ti=0;ti<=4;ti++) {
+    ctxT.fillText((ti/4).toFixed(2), ti*CN/4-8, CN-2);
+    ctxT.fillText((1-ti/4).toFixed(2), 2, ti*CN/4+10);
+  }
+}
+
+// Marching-squares contour lines (from response_surface demo)
+function drawContourLines(ctx, vals, gs, canvasN, vMin, vRange) {
+  var nLevels = 10, step = canvasN / (gs - 1);
+  function edgeXY(gi, gj, edge, frac) {
+    switch (edge) {
+      case 0: return [step*(gi+frac), step*gj];
+      case 1: return [step*(gi+1),    step*(gj+frac)];
+      case 2: return [step*(gi+frac), step*(gj+1)];
+      case 3: return [step*gi,        step*(gj+frac)];
+    }
+  }
+  function lerp(a, b, level) { var d=b-a; return d===0 ? 0.5 : (level-a)/d; }
+  var SEG = [
+    [],[[2,3]],[[1,2]],[[1,3]],[[0,1]],null,[[0,2]],[[0,3]],
+    [[0,3]],[[0,2]],null,[[0,1]],[[1,3]],[[1,2]],[[2,3]],[]
+  ];
+  for (var li = 1; li < nLevels; li++) {
+    var level = vMin + vRange * li / nLevels;
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    for (var gj = 0; gj < gs-1; gj++) {
+      for (var gi = 0; gi < gs-1; gi++) {
+        var tl=vals[gj*gs+gi], tr=vals[gj*gs+gi+1];
+        var bl=vals[(gj+1)*gs+gi], br=vals[(gj+1)*gs+gi+1];
+        var code = (tl>=level?8:0)|(tr>=level?4:0)|(br>=level?2:0)|(bl>=level?1:0);
+        if (code===0||code===15) continue;
+        var segs = SEG[code];
+        if (!segs) {
+          var center = (tl+tr+br+bl)/4;
+          if (code===5) segs = center>=level ? [[0,3],[1,2]] : [[0,1],[2,3]];
+          else          segs = center>=level ? [[0,1],[2,3]] : [[0,3],[1,2]];
+        }
+        for (var si=0; si<segs.length; si++) {
+          var eA=segs[si][0], eB=segs[si][1];
+          var fA, fB;
+          if (eA===0) fA=lerp(tl,tr,level); else if (eA===1) fA=lerp(tr,br,level);
+          else if (eA===2) fA=lerp(bl,br,level); else fA=lerp(tl,bl,level);
+          if (eB===0) fB=lerp(tl,tr,level); else if (eB===1) fB=lerp(tr,br,level);
+          else if (eB===2) fB=lerp(bl,br,level); else fB=lerp(tl,bl,level);
+          var pA=edgeXY(gi,gj,eA,fA), pB=edgeXY(gi,gj,eB,fB);
+          ctx.moveTo(pA[0],pA[1]); ctx.lineTo(pB[0],pB[1]);
+        }
+      }
+    }
+    ctx.stroke();
+  }
+}
+
+// Draw star at given coords on a context
+function drawStar(ctx, px, py) {
+  ctx.save(); ctx.translate(px,py); ctx.beginPath();
+  for (var sk=0;sk<5;sk++) {
+    var sa = -Math.PI/2 + sk*2*Math.PI/5, sb = sa + Math.PI/5;
+    ctx.lineTo(5*Math.cos(sa), 5*Math.sin(sa));
+    ctx.lineTo(2*Math.cos(sb), 2*Math.sin(sb));
+  }
+  ctx.closePath();
+  ctx.fillStyle='rgba(255,255,0,0.7)'; ctx.fill();
+  ctx.strokeStyle='rgba(170,170,0,0.9)'; ctx.lineWidth=0.8; ctx.stroke();
+  ctx.restore();
+}
+
+// Render true function
+function renderTrueFunction() {
+  precomputeTrueFunction();
+  drawTrueOverlay([], 0, -1);
+  document.getElementById('tlo').textContent = trueMin.toFixed(1);
+  document.getElementById('thi').textContent = trueMax.toFixed(1);
+}
+renderTrueFunction();
+drawColorbar('cbT', viridis);
+drawColorbar('cbM', viridis);
+drawColorbar('cbS', plasma);
+
+// Problem selector
+document.getElementById('selProblem').addEventListener('change', function() {
+  curProblem = PROBLEMS[this.value];
+  boReset();
+});
+
+// ── State for hover/click interaction ──
+var lastX = null, lastRawY = null, lastPredictor = null;
+var pinnedTrainIdx = -1, hoverNeighborIdx = -1;
+
+function renderPosterior(model, X, rawY, hp) {
+  var pts = [];
+  for (var gj=0;gj<GS;gj++) for (var gi=0;gi<GS;gi++) {
+    pts.push([gi/(GS-1), 1-gj/(GS-1)]);
+  }
+  var pred = model.predict(pts);
+  var means = pred.mean, vars = pred.variance;
+  var stds = new Float64Array(means.length), stdMax = 0;
+  for (var i=0;i<means.length;i++) { stds[i]=Math.sqrt(vars[i]); if(stds[i]>stdMax) stdMax=stds[i]; }
+  // Heatmaps + contour lines
+  renderHeatmap(ctxM, means, trueMin, trueRange, viridis);
+  renderHeatmap(ctxS, stds, 0, stdMax||1, plasma);
+  drawContourLines(ctxM, Array.from(means), GS, CN, trueMin, trueRange);
+  drawContourLines(ctxS, Array.from(stds), GS, CN, 0, stdMax||1);
+  // True function with points
+  drawTrueOverlay(X, N_INIT, X.length-1);
+  // Overlay (training points on posterior canvases)
+  drawOverlays(undefined, undefined, -1, pinnedTrainIdx);
+  document.getElementById('mlo').textContent = trueMin.toFixed(1);
+  document.getElementById('mhi').textContent = trueMax.toFixed(1);
+  document.getElementById('shi').textContent = stdMax.toFixed(2);
+}
+
+// ── Overlay: crosshair + training points with neighbor-mode opacity ──
+function drawOverlays(hx, hy, hoveredIdx, neighborActiveIdx) {
+  if (!lastX) return;
+  [ctxOM, ctxOS].forEach(function(ctx) {
+    ctx.clearRect(0, 0, CN, CN);
+    if (hx !== undefined) {
+      ctx.beginPath(); ctx.moveTo(hx, 0); ctx.lineTo(hx, CN);
+      ctx.moveTo(0, hy); ctx.lineTo(CN, hy);
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 0.5; ctx.stroke();
+    }
+    // Axis labels
+    ctx.font = '12px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('x0 ->', CN - 50, CN - 8);
+    ctx.save(); ctx.translate(14, 60); ctx.rotate(-Math.PI / 2);
+    ctx.fillText('x1 ->', 0, 0); ctx.restore();
+    ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    for (var ti = 0; ti <= 4; ti++) {
+      ctx.fillText((ti/4).toFixed(2), ti*CN/4 - 8, CN - 2);
+      ctx.fillText((1-ti/4).toFixed(2), 2, ti*CN/4 + 10);
+    }
+    // Kernel-distance neighbor mode
+    var activePt = (neighborActiveIdx >= 0 && neighborActiveIdx < lastX.length)
+      ? lastX[neighborActiveIdx] : null;
+    var neighborRels = null, neighborMax = 0;
+    if (activePt && lastPredictor) {
+      neighborRels = [];
+      for (var ni = 0; ni < lastX.length; ni++) {
+        if (ni === neighborActiveIdx) { neighborRels.push(1); continue; }
+        var nr = lastPredictor.kernelCorrelation(lastX[ni], activePt, 'y');
+        neighborRels.push(nr);
+        if (nr > neighborMax) neighborMax = nr;
+      }
+    }
+    // Training points
+    for (var i = 0; i < lastX.length; i++) {
+      var ppx = lastX[i][0]*CN, ppy = (1-lastX[i][1])*CN;
+      var fillAlpha;
+      if (activePt && neighborRels) {
+        fillAlpha = (i === neighborActiveIdx) ? 0.95
+          : Math.max(0.08, Math.min(0.90, Math.sqrt(neighborMax > 0 ? neighborRels[i]/neighborMax : 0)));
+      } else { fillAlpha = 0.95; }
+      var isActive = (i === neighborActiveIdx), isHovered = (i === hoveredIdx);
+      var outerR = (isActive || isHovered) ? 7.5 : 5;
+      var innerR = (isActive || isHovered) ? 4 : 2.5;
+      ctx.beginPath(); ctx.arc(ppx, ppy, outerR, 0, 2*Math.PI);
+      ctx.strokeStyle = isActive ? 'rgba(255,255,255,1)'
+        : 'rgba(255,255,255,' + Math.max(0.15, fillAlpha*0.6).toFixed(3) + ')';
+      ctx.lineWidth = isActive ? 2.5 : (isHovered ? 2 : 1.5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ppx, ppy, innerR, 0, 2*Math.PI);
+      var bc = i < N_INIT ? [255,255,255] : (i === lastX.length-1 ? [255,68,68] : [100,255,100]);
+      ctx.fillStyle = (isActive || isHovered)
+        ? 'rgba(' + bc.join(',') + ',1)'
+        : 'rgba(' + bc.join(',') + ',' + fillAlpha.toFixed(3) + ')';
+      ctx.fill();
+    }
+    // Optima stars on overlays too
+    for (var oi = 0; oi < curProblem.optima.length; oi++) {
+      drawStar(ctx, curProblem.optima[oi][0]*CN, (1-curProblem.optima[oi][1])*CN);
+    }
+  });
+}
+
+// ── Hover + click handlers on posterior canvases ──
+var HOVER_R = 9;
+function nearestTrainPoint(cpx, cpy) {
+  if (!lastX || !lastX.length) return -1;
+  var best = -1, bestD = HOVER_R;
+  for (var i = 0; i < lastX.length; i++) {
+    var dx = lastX[i][0]*CN - cpx, dy = (1-lastX[i][1])*CN - cpy;
+    var d = Math.sqrt(dx*dx + dy*dy);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+['cvM', 'cvS'].forEach(function(id) {
+  var cv = document.getElementById(id);
+  cv.addEventListener('mousemove', function(e) {
+    if (!lastX) return;
+    var rect = cv.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var x0v = px / CN, x1v = 1 - py / CN;
+    var hitIdx = nearestTrainPoint(px, py);
+    var tt = document.getElementById('tooltip');
+    var ttTitle = document.getElementById('tt-title');
+    var ttBody = document.getElementById('tt-body');
+    var activeIdx = pinnedTrainIdx;
+    if (activeIdx === -1 && hitIdx >= 0) { activeIdx = hitIdx; hoverNeighborIdx = hitIdx; }
+    else if (activeIdx === -1) { hoverNeighborIdx = -1; }
+
+    if (hitIdx >= 0) {
+      var tpt = lastX[hitIdx], yVal = lastRawY[hitIdx];
+      var typeLabel = hitIdx < N_INIT ? 'initial' : (hitIdx === lastX.length-1 ? 'latest' : 'BO iter ' + (hitIdx - N_INIT + 1));
+      ttTitle.textContent = 'training point #' + (hitIdx + 1);
+      ttBody.innerHTML = '<span class="tt-val">y = ' + yVal.toFixed(4) + '</span><br>' +
+        '<span class="tt-coord">x0</span> = ' + tpt[0].toFixed(4) + '<br>' +
+        '<span class="tt-coord">x1</span> = ' + tpt[1].toFixed(4) + '<br>' +
+        '<span style="color:#888">' + typeLabel + '</span>';
+      tt.style.display = 'block';
+      tt.style.left = (e.clientX + 16) + 'px'; tt.style.top = (e.clientY - 10) + 'px';
+      document.getElementById('statline').innerHTML =
+        'point #' + (hitIdx+1) + ' (' + typeLabel + ') y = <span>' + yVal.toFixed(4) + '</span>';
+      cv.style.cursor = 'pointer';
+    } else {
+      if (lastPredictor) {
+        var p = lastPredictor.predict([[x0v, x1v]]).y;
+        var mu = p.mean[0], std = Math.sqrt(p.variance[0]);
+        document.getElementById('statline').innerHTML =
+          'x0 = <span>' + x0v.toFixed(4) + '</span>  x1 = <span>' + x1v.toFixed(4) + '</span>  ' +
+          'mu = <span>' + mu.toFixed(4) + '</span>  std = <span>' + std.toFixed(4) + '</span>';
+        ttTitle.textContent = '';
+        ttBody.innerHTML = 'mu = ' + mu.toFixed(4) + '<br>std = ' + std.toFixed(4);
+      }
+      tt.style.display = 'block';
+      tt.style.left = (e.clientX + 16) + 'px'; tt.style.top = (e.clientY - 10) + 'px';
+      cv.style.cursor = 'crosshair';
+    }
+    drawOverlays(px, py, hitIdx, activeIdx);
+    highlightTraceDots(activeIdx);
+  });
+  cv.addEventListener('click', function(e) {
+    if (!lastX) return;
+    var rect = cv.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var hitIdx = nearestTrainPoint(px, py);
+    if (hitIdx >= 0) { pinnedTrainIdx = (pinnedTrainIdx === hitIdx) ? -1 : hitIdx; }
+    else { pinnedTrainIdx = -1; }
+    var a = pinnedTrainIdx >= 0 ? pinnedTrainIdx : hoverNeighborIdx;
+    drawOverlays(px, py, hitIdx, a);
+    highlightTraceDots(a);
+  });
+  cv.addEventListener('mouseleave', function() {
+    document.getElementById('tooltip').style.display = 'none';
+    hoverNeighborIdx = -1;
+    drawOverlays(undefined, undefined, -1, pinnedTrainIdx);
+    highlightTraceDots(pinnedTrainIdx);
+    document.getElementById('statline').innerHTML =
+      pinnedTrainIdx >= 0
+        ? 'pinned point #' + (pinnedTrainIdx+1) + ' -- click elsewhere to unpin'
+        : 'hover over posterior maps to inspect';
+  });
+});
+
+// ── LOO Cross-Validation scatter plot ──
+function renderLOO() {
+  if (!lastPredictor) return;
+  var loo = lastPredictor.loocv('y');
+  var obs = loo.observed, pmean = loo.mean, pvar = loo.variance;
+  var n = obs.length;
+  // Compute range
+  var lo = Infinity, hi = -Infinity;
+  for (var i=0;i<n;i++) {
+    var elo = pmean[i] - 2*Math.sqrt(pvar[i]), ehi = pmean[i] + 2*Math.sqrt(pvar[i]);
+    lo = Math.min(lo, obs[i], elo); hi = Math.max(hi, obs[i], ehi);
+  }
+  var pad = (hi-lo)*0.08; lo -= pad; hi += pad;
+  var range = hi - lo || 1;
+  var margin = 32, pw = CN - 2*margin;
+  // Clear and draw
+  ctxLOO.clearRect(0,0,CN,CN);
+  ctxLOO.fillStyle = '#111'; ctxLOO.fillRect(0,0,CN,CN);
+  // Diagonal line (perfect prediction)
+  ctxLOO.strokeStyle = 'rgba(255,255,255,0.15)'; ctxLOO.lineWidth = 1;
+  ctxLOO.beginPath();
+  ctxLOO.moveTo(margin, margin); ctxLOO.lineTo(margin+pw, margin+pw);
+  ctxLOO.stroke();
+  // Axis labels
+  ctxLOO.font = '10px sans-serif'; ctxLOO.fillStyle = 'rgba(255,255,255,0.3)';
+  ctxLOO.fillText('observed', margin + pw/2 - 20, CN - 4);
+  ctxLOO.save(); ctxLOO.translate(10, margin + pw/2 + 16); ctxLOO.rotate(-Math.PI/2);
+  ctxLOO.fillText('predicted', 0, 0); ctxLOO.restore();
+  // Tick marks
+  for (var t=0;t<=4;t++) {
+    var val = lo + t*range/4;
+    var px = margin + t*pw/4, py = margin + t*pw/4;
+    ctxLOO.fillStyle = 'rgba(255,255,255,0.25)';
+    ctxLOO.fillText(val.toFixed(1), px - 8, CN - margin + 14);
+    ctxLOO.fillText(val.toFixed(1), 2, py + 3);
+  }
+  // Error bars + points
+  for (var i=0;i<n;i++) {
+    var px = margin + (obs[i]-lo)/range*pw;
+    var py = margin + pw - (pmean[i]-lo)/range*pw;
+    var errH = 2*Math.sqrt(pvar[i])/range*pw;
+    ctxLOO.strokeStyle = 'rgba(100,180,255,0.3)'; ctxLOO.lineWidth = 1.5;
+    ctxLOO.beginPath(); ctxLOO.moveTo(px,py-errH); ctxLOO.lineTo(px,py+errH); ctxLOO.stroke();
+    ctxLOO.beginPath(); ctxLOO.arc(px,py,3,0,2*Math.PI);
+    ctxLOO.fillStyle = 'rgba(100,180,255,0.85)'; ctxLOO.fill();
+    ctxLOO.strokeStyle = 'rgba(255,255,255,0.4)'; ctxLOO.lineWidth = 0.5; ctxLOO.stroke();
+  }
+  // Compute R^2
+  var mObs = 0; for (var i=0;i<n;i++) mObs += obs[i]; mObs /= n;
+  var ssTot = 0, ssRes = 0;
+  for (var i=0;i<n;i++) { ssTot += (obs[i]-mObs)*(obs[i]-mObs); ssRes += (obs[i]-pmean[i])*(obs[i]-pmean[i]); }
+  var r2 = 1 - ssRes/(ssTot||1);
+  document.getElementById('looStats').textContent = 'R2 = ' + r2.toFixed(4) + ' | n = ' + n;
+}
+
+// ── Optimization Trace (SVG) ──
+var traceDots = [];  // [{el, idx, value, best, isBest, cx, cy}]
+
+function renderTrace() {
+  if (!lastRawY || lastRawY.length === 0) return;
+  var container = document.getElementById('traceContainer');
+  container.innerHTML = '';
+
+  var rawY = lastRawY;
+  var n = rawY.length;
+
+  // Running best (always minimize in BO demo)
+  var best = rawY[0];
+  var bestSoFar = rawY.map(function(y) { best = Math.min(best, y); return best; });
+
+  var yMin = Math.min.apply(null, rawY);
+  var yMax = Math.max.apply(null, rawY);
+  var yPad = 0.08 * (yMax - yMin || 1);
+  yMin -= yPad; yMax += yPad;
+
+  var W = 320, H = 320;
+  var margin = { top: 20, right: 12, bottom: 30, left: 42 };
+  var pw = W - margin.left - margin.right;
+  var ph = H - margin.top - margin.bottom;
+
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+
+  function sx(i) { return margin.left + (i / Math.max(1, n - 1)) * pw; }
+  function sy(v) { return margin.top + ph - (v - yMin) / (yMax - yMin) * ph; }
+
+  // Grid
+  var nTicks = 4;
+  for (var t = 0; t <= nTicks; t++) {
+    var v = yMin + (yMax - yMin) * t / nTicks;
+    var gl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    gl.setAttribute('x1', margin.left); gl.setAttribute('x2', margin.left + pw);
+    gl.setAttribute('y1', sy(v)); gl.setAttribute('y2', sy(v));
+    gl.setAttribute('stroke', 'rgba(255,255,255,0.05)');
+    svg.appendChild(gl);
+    var yt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    yt.setAttribute('x', margin.left - 4); yt.setAttribute('y', sy(v) + 3);
+    yt.setAttribute('fill', '#555'); yt.setAttribute('font-size', '8');
+    yt.setAttribute('text-anchor', 'end'); yt.textContent = v.toFixed(1);
+    svg.appendChild(yt);
+  }
+
+  // Best-so-far step line
+  var bsfPath = 'M ' + sx(0) + ' ' + sy(bestSoFar[0]);
+  for (var i = 1; i < n; i++) {
+    bsfPath += ' H ' + sx(i) + ' V ' + sy(bestSoFar[i]);
+  }
+  var bsfLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  bsfLine.setAttribute('d', bsfPath);
+  bsfLine.setAttribute('stroke', '#7c6ff7'); bsfLine.setAttribute('stroke-width', '2');
+  bsfLine.setAttribute('fill', 'none'); bsfLine.setAttribute('opacity', '0.7');
+  svg.appendChild(bsfLine);
+
+  // Dots (color matches BO legend: white=initial, green=BO, red=latest)
+  traceDots = [];
+  for (var i = 0; i < n; i++) {
+    var isBest = bestSoFar[i] === rawY[i];
+    var isInit = i < N_INIT, isLatest = i === n - 1;
+    var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    var cx = sx(i), cy = sy(rawY[i]);
+    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy);
+    dot.setAttribute('r', isLatest ? '4' : '3');
+    var baseColor = isLatest ? '255,68,68' : (isInit ? '255,255,255' : '100,255,100');
+    dot.setAttribute('fill', 'rgba(' + baseColor + ',' + (isBest ? '0.95' : '0.5') + ')');
+    dot.setAttribute('stroke', isBest ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.15)');
+    dot.setAttribute('stroke-width', '1');
+    svg.appendChild(dot);
+    traceDots.push({ el: dot, idx: i, value: rawY[i], best: bestSoFar[i],
+      isBest: isBest, isInit: isInit, isLatest: isLatest, baseColor: baseColor,
+      cx: cx, cy: cy });
+  }
+
+  // Axis labels
+  var xl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  xl.setAttribute('x', margin.left + pw/2); xl.setAttribute('y', H - 4);
+  xl.setAttribute('fill', '#888'); xl.setAttribute('font-size', '10');
+  xl.setAttribute('text-anchor', 'middle'); xl.textContent = 'trial';
+  svg.appendChild(xl);
+
+  // X ticks
+  var xStep = Math.max(1, Math.ceil(n / 8));
+  for (var i = 0; i < n; i += xStep) {
+    var xt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    xt.setAttribute('x', sx(i)); xt.setAttribute('y', margin.top + ph + 14);
+    xt.setAttribute('fill', '#555'); xt.setAttribute('font-size', '8');
+    xt.setAttribute('text-anchor', 'middle'); xt.textContent = String(i);
+    svg.appendChild(xt);
+  }
+
+  // Legend
+  var leg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  var lr = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  lr.setAttribute('x1', margin.left + pw - 90); lr.setAttribute('x2', margin.left + pw - 76);
+  lr.setAttribute('y1', margin.top + 10); lr.setAttribute('y2', margin.top + 10);
+  lr.setAttribute('stroke', '#7c6ff7'); lr.setAttribute('stroke-width', '2');
+  leg.appendChild(lr);
+  var lt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  lt.setAttribute('x', margin.left + pw - 73); lt.setAttribute('y', margin.top + 13);
+  lt.setAttribute('fill', '#888'); lt.setAttribute('font-size', '9');
+  lt.textContent = 'best so far';
+  leg.appendChild(lt);
+  svg.appendChild(leg);
+
+  container.appendChild(svg);
+
+  // ── Hover/click for trace panel ──
+  var TRACE_HOVER_R = 10;
+  function findNearestTrace(px, py) {
+    var best = -1, bestD = TRACE_HOVER_R;
+    for (var i = 0; i < traceDots.length; i++) {
+      var dx = px - traceDots[i].cx, dy = py - traceDots[i].cy;
+      var d = Math.sqrt(dx*dx + dy*dy);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  container.addEventListener('mousemove', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var hit = findNearestTrace(px, py);
+    var activeIdx = pinnedTrainIdx;
+    if (activeIdx === -1 && hit >= 0) { activeIdx = hit; hoverNeighborIdx = hit; }
+    else if (activeIdx === -1) { hoverNeighborIdx = -1; }
+
+    if (hit >= 0) {
+      var d = traceDots[hit];
+      var typeLabel = d.isInit ? 'initial' : (d.isLatest ? 'latest' : 'BO iter ' + (d.idx - N_INIT + 1));
+      var tt = document.getElementById('tooltip');
+      var ttTitle = document.getElementById('tt-title');
+      var ttBody = document.getElementById('tt-body');
+      ttTitle.textContent = 'trial ' + d.idx;
+      ttBody.innerHTML = '<span class="tt-val">y = ' + d.value.toFixed(4) + '</span><br>' +
+        'best so far = ' + d.best.toFixed(4) + '<br>' +
+        '<span class="tt-coord">x0</span> = ' + lastX[d.idx][0].toFixed(4) + '<br>' +
+        '<span class="tt-coord">x1</span> = ' + lastX[d.idx][1].toFixed(4) + '<br>' +
+        '<span style="color:#888">' + typeLabel + '</span>';
+      tt.style.display = 'block';
+      tt.style.left = (e.clientX + 16) + 'px'; tt.style.top = (e.clientY - 10) + 'px';
+      container.style.cursor = 'pointer';
+    } else {
+      document.getElementById('tooltip').style.display = 'none';
+      container.style.cursor = 'crosshair';
+    }
+    highlightTraceDots(activeIdx);
+    drawOverlays(undefined, undefined, -1, activeIdx);
+  });
+
+  container.addEventListener('click', function(e) {
+    var rect = container.getBoundingClientRect();
+    var px = e.clientX - rect.left, py = e.clientY - rect.top;
+    var hit = findNearestTrace(px, py);
+    if (hit >= 0) { pinnedTrainIdx = (pinnedTrainIdx === hit) ? -1 : hit; }
+    else { pinnedTrainIdx = -1; }
+    var activeIdx = pinnedTrainIdx >= 0 ? pinnedTrainIdx : hoverNeighborIdx;
+    highlightTraceDots(activeIdx);
+    drawOverlays(undefined, undefined, -1, activeIdx);
+  });
+
+  container.addEventListener('mouseleave', function() {
+    document.getElementById('tooltip').style.display = 'none';
+    hoverNeighborIdx = -1;
+    highlightTraceDots(pinnedTrainIdx);
+    drawOverlays(undefined, undefined, -1, pinnedTrainIdx);
+  });
+}
+
+function highlightTraceDots(activeIdx) {
+  if (!traceDots.length || !lastPredictor) return;
+  var activePt = (activeIdx >= 0 && activeIdx < lastX.length) ? lastX[activeIdx] : null;
+  var rels = null, maxRel = 0;
+  if (activePt) {
+    rels = [];
+    for (var i = 0; i < traceDots.length; i++) {
+      if (i === activeIdx) { rels.push(1); continue; }
+      var r = lastPredictor.kernelCorrelation(lastX[i], activePt, 'y');
+      rels.push(r);
+      if (r > maxRel) maxRel = r;
+    }
+  }
+  for (var i = 0; i < traceDots.length; i++) {
+    var d = traceDots[i];
+    if (activePt) {
+      if (i === activeIdx) {
+        d.el.setAttribute('fill', 'rgba(255,80,80,0.95)');
+        d.el.setAttribute('stroke', 'rgba(255,255,255,1)');
+        d.el.setAttribute('stroke-width', '2'); d.el.setAttribute('r', '5');
+      } else {
+        var relNorm = maxRel > 0 ? rels[i] / maxRel : 0;
+        var fa = Math.max(0.08, Math.min(0.90, Math.sqrt(relNorm)));
+        d.el.setAttribute('fill', 'rgba(' + d.baseColor + ',' + fa.toFixed(3) + ')');
+        d.el.setAttribute('stroke', 'rgba(255,255,255,' + Math.max(0.15, fa * 0.6).toFixed(3) + ')');
+        d.el.setAttribute('stroke-width', '1'); d.el.setAttribute('r', d.isLatest ? '4' : '3');
+      }
+    } else {
+      d.el.setAttribute('fill', 'rgba(' + d.baseColor + ',' + (d.isBest ? '0.95' : '0.5') + ')');
+      d.el.setAttribute('stroke', d.isBest ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.15)');
+      d.el.setAttribute('stroke-width', '1'); d.el.setAttribute('r', d.isLatest ? '4' : '3');
+    }
+  }
+}
+
+function updateInfo(iter, rawY, hp) {
+  var best = Infinity;
+  for (var i=0;i<rawY.length;i++) if(rawY[i]<best) best=rawY[i];
+  var txt = 'Iteration <span>' + (iter+1) + '/' + N_ITER + '</span>';
+  txt += ' | Best: <span>' + best.toFixed(4) + '</span>';
+  txt += ' (global min ~ ' + curProblem.fmin.toFixed(4) + ')';
+  txt += ' | n=' + rawY.length;
+  txt += '<br>ls: [' + hp.ls[0].toFixed(3) + ', ' + hp.ls[1].toFixed(3) + ']';
+  txt += ' | outputscale: ' + hp.os.toFixed(3);
+  txt += ' | noise: ' + hp.nv.toExponential(1);
+  document.getElementById('info').innerHTML = txt;
+}
+
+// ── BO state machine ──
+var boState = null;  // {X, rawY, hp, rng, seed, iter}
+
+function boInit() {
+  pinnedTrainIdx = -1;
+  renderTrueFunction();
+  var seed = (Math.random() * 4294967296) >>> 0;
+  var rng = new Rng(seed);
+  var X = [], rawY = [];
+  for (var i = 0; i < N_INIT; i++) {
+    var pt = [rng.uniform(), rng.uniform()];
+    X.push(pt); rawY.push(curProblem.fn(pt[0], pt[1]));
+  }
+  var hp = fitGP(X, rawY);
+  hp.yStd = rawY.map(function(y) { return (y - hp.ymean) / hp.ystd; });
+  boState = { X: X, rawY: rawY, hp: hp, rng: rng, seed: seed, iter: 0 };
+  boRender(hp);
+  document.getElementById('status').innerHTML =
+    'Initialized (' + N_INIT + ' random points, seed: ' + seed + ')';
+}
+
+function boStep() {
+  if (!boState) boInit();
+  var s = boState;
+  var next = thompsonSampleRFF(s.X, s.hp, s.rng);
+  if (!next) { next = [s.rng.uniform(), s.rng.uniform()]; }
+  s.X.push(next); s.rawY.push(curProblem.fn(next[0], next[1]));
+  s.hp = fitGP(s.X, s.rawY);
+  s.hp.yStd = s.rawY.map(function(y) { return (y - s.hp.ymean) / s.hp.ystd; });
+  s.iter++;
+  boRender(s.hp);
+  var best = Infinity;
+  for (var i = 0; i < s.rawY.length; i++) if (s.rawY[i] < best) best = s.rawY[i];
+  document.getElementById('status').innerHTML =
+    'Iter <span>' + s.iter + '</span> | n=' + s.rawY.length +
+    ' | Best: <span>' + best.toFixed(4) + '</span>';
+}
+
+function boRender(hp) {
+  var s = boState;
+  var ms = buildModelState(s.X, s.rawY, hp);
+  var model = loadModel(ms);
+  renderPosterior(model, s.X, s.rawY, hp);
+  lastX = s.X; lastRawY = s.rawY;
+  lastPredictor = new Predictor({
+    search_space: {parameters: [{name:'x0',type:'range',bounds:[0,1]},{name:'x1',type:'range',bounds:[0,1]}]},
+    model_state: ms, outcome_names: ['y']
+  });
+  renderLOO();
+  renderTrace();
+  updateInfo(s.iter - 1, s.rawY, hp);
+}
+
+function boReset() {
+  boState = null;
+  running = false;
+  pinnedTrainIdx = -1;
+  lastX = null; lastRawY = null; lastPredictor = null;
+  traceDots = [];
+  renderTrueFunction();
+  ctxM.clearRect(0, 0, CN, CN); ctxS.clearRect(0, 0, CN, CN);
+  ctxOM.clearRect(0, 0, CN, CN); ctxOS.clearRect(0, 0, CN, CN);
+  ctxLOO.clearRect(0, 0, CN, CN);
+  document.getElementById('traceContainer').innerHTML = '';
+  document.getElementById('mlo').textContent = '--';
+  document.getElementById('mhi').textContent = '--';
+  document.getElementById('shi').textContent = '--';
+  document.getElementById('looStats').textContent = '--';
+  document.getElementById('info').innerHTML = '';
+  document.getElementById('statline').innerHTML = 'hover over posterior maps to inspect';
+  document.getElementById('status').innerHTML = 'Click Iterate to step through, or Run All for animation';
+  document.getElementById('btnStep').disabled = false;
+  document.getElementById('btnRun').disabled = false;
+  document.getElementById('selProblem').disabled = false;
+}
+
+function delay(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+
+async function runAll() {
+  if (running) return;
+  running = true;
+  document.getElementById('btnStep').disabled = true;
+  document.getElementById('btnRun').disabled = true;
+  document.getElementById('selProblem').disabled = true;
+  if (!boState) boInit();
+  for (var i = 0; i < N_ITER; i++) {
+    if (!running) break;
+    boStep();
+    await delay(DELAY_MS);
+  }
+  running = false;
+  document.getElementById('btnStep').disabled = false;
+  document.getElementById('btnRun').disabled = false;
+  document.getElementById('selProblem').disabled = false;
+}
+
+document.getElementById('btnStep').addEventListener('click', function() { if (!running) boStep(); });
+document.getElementById('btnRun').addEventListener('click', runAll);
+document.getElementById('btnReset').addEventListener('click', boReset);
+</script>
+</body>
+</html>`;
+
+
+// Write all demos
 writeFileSync(join(__dirname, 'slice_plot.html'), slicePlot);
 writeFileSync(join(__dirname, 'response_surface.html'), responseSurface);
 writeFileSync(join(__dirname, 'radar.html'), radar);
 writeFileSync(join(__dirname, 'scatteroid.html'), scatteroid);
 writeFileSync(join(__dirname, 'point_proximity.html'), pointProximity);
+writeFileSync(join(__dirname, 'cross_validation.html'), crossValidation);
+writeFileSync(join(__dirname, 'feature_importance.html'), featureImportance);
+writeFileSync(join(__dirname, 'optimization_trace.html'), optimizationTrace);
+writeFileSync(join(__dirname, 'bayesian_optimization.html'), bayesianOptimization);
 
-console.log('Built 5 self-contained demo HTML files:');
+console.log('Built 9 self-contained demo HTML files:');
 console.log('  demo/slice_plot.html');
 console.log('  demo/response_surface.html');
 console.log('  demo/radar.html');
 console.log('  demo/scatteroid.html');
 console.log('  demo/point_proximity.html');
+console.log('  demo/cross_validation.html');
+console.log('  demo/feature_importance.html');
+console.log('  demo/optimization_trace.html');
+console.log('  demo/bayesian_optimization.html');

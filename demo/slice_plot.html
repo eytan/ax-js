@@ -60,13 +60,12 @@
 </head>
 <body>
 
-<h1>Ax-Style 1D Slice Plots</h1>
+<h1><a href="index.html" style="text-decoration:none"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="22" height="22" style="vertical-align:-3px;margin-right:8px;opacity:0.7"><path fill="#fff" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg></a>Ax-Style 1D Slice Plots</h1>
 <p class="subtitle" id="subtitle">Load a fixture JSON to visualize GP posterior slices</p>
 
 <div class="controls">
   <label>Fixture: <input type="file" id="fileInput" accept=".json"></label>
   <label>Outcome: <select id="outcomeSelect"><option value="0">y0</option></select></label>
-  <label style="margin-left:6px"><input type="checkbox" id="cbNearby" checked> nearby points only</label>
 </div>
 
 <div id="plots"><div class="no-data">Loading...</div></div>
@@ -98,66 +97,12 @@ var axjs = (() => {
   // src/index.ts
   var index_exports = {};
   __export(index_exports, {
-    ActiveDimsKernel: () => ActiveDimsKernel,
-    AdditiveKernel: () => AdditiveKernel,
-    BilogUntransform: () => BilogUntransform,
-    CategoricalKernel: () => CategoricalKernel,
-    ChainedOutcomeUntransform: () => ChainedOutcomeUntransform,
-    ConstantMean: () => ConstantMean,
-    EUBO: () => EUBO,
-    EnsembleGP: () => EnsembleGP,
-    ExactGP: () => ExactGP,
-    ExpectedImprovement: () => ExpectedImprovement,
-    IndexKernel: () => IndexKernel,
-    InputNormalize: () => InputNormalize,
-    InputWarp: () => InputWarp,
-    LogExpectedImprovement: () => LogExpectedImprovement,
-    LogUntransform: () => LogUntransform,
-    MaternKernel: () => MaternKernel,
-    Matrix: () => Matrix,
-    ModelListGP: () => ModelListGP,
-    MultiTaskGP: () => MultiTaskGP,
-    MultitaskKernel: () => MultitaskKernel,
-    OutputUntransform: () => StandardizeUntransform,
-    PairwiseGP: () => PairwiseGP,
-    PowerUntransform: () => PowerUntransform,
     Predictor: () => Predictor,
-    ProductKernel: () => ProductKernel,
-    RBFKernel: () => RBFKernel,
-    Rng: () => Rng,
-    ScaleKernel: () => ScaleKernel,
-    SingleTaskGP: () => SingleTaskGP,
-    StandardizeUntransform: () => StandardizeUntransform,
-    ThompsonSampling: () => ThompsonSampling,
-    UpperConfidenceBound: () => UpperConfidenceBound,
-    add: () => add,
-    backSolve: () => backSolve,
-    buildKernel: () => buildKernel,
-    buildOutcomeUntransform: () => buildOutcomeUntransform,
-    cdist: () => cdist,
-    cdistSquared: () => cdistSquared,
-    cholesky: () => cholesky,
-    createPairwiseGP: () => createPairwiseGP,
-    dot: () => dot,
-    forwardSolve: () => forwardSolve,
-    kernelDiag: () => kernelDiag,
+    boundsInputTransform: () => boundsInputTransform,
+    identityInputTransform: () => identityInputTransform,
     loadModel: () => loadModel,
-    logNormalCdf: () => logNormalCdf,
-    logNormalPdf: () => logNormalPdf,
-    matmul: () => matmul,
-    normalCdf: () => normalCdf,
-    normalPdf: () => normalPdf,
-    optimizeAcqf: () => optimizeAcqf,
-    posteriorCovariance: () => posteriorCovariance,
-    posteriorMean: () => posteriorMean,
     relativize: () => relativize,
     relativizePredictions: () => relativizePredictions,
-    sampleMVN: () => sampleMVN,
-    scale: () => scale,
-    solveCholesky: () => solveCholesky,
-    solveLU: () => solveLU,
-    thompsonSamples: () => thompsonSamples,
-    transpose: () => transpose,
     unrelativize: () => unrelativize
   });
 
@@ -300,125 +245,480 @@ var axjs = (() => {
     return backSolve(L, forwardSolve(L, b));
   }
 
-  // src/linalg/lu.ts
-  function lu(A) {
-    const n = A.rows;
-    const M = A.clone();
-    const perm = Array.from({ length: n }, (_, i) => i);
-    for (let k = 0; k < n; k++) {
-      let maxVal = Math.abs(M.get(k, k));
-      let maxRow = k;
-      for (let i = k + 1; i < n; i++) {
-        const v = Math.abs(M.get(i, k));
-        if (v > maxVal) {
-          maxVal = v;
-          maxRow = i;
-        }
-      }
-      if (maxRow !== k) {
-        [perm[k], perm[maxRow]] = [perm[maxRow], perm[k]];
-        for (let j = 0; j < n; j++) {
-          const tmp = M.get(k, j);
-          M.set(k, j, M.get(maxRow, j));
-          M.set(maxRow, j, tmp);
-        }
-      }
-      const pivot = M.get(k, k);
-      if (Math.abs(pivot) < 1e-15) continue;
-      for (let i = k + 1; i < n; i++) {
-        const factor = M.get(i, k) / pivot;
-        M.set(i, k, factor);
-        for (let j = k + 1; j < n; j++) {
-          M.set(i, j, M.get(i, j) - factor * M.get(k, j));
-        }
+  // src/kernels/composite.ts
+  function extractActiveDims(x, activeDims) {
+    const result = new Matrix(x.rows, activeDims.length);
+    for (let i = 0; i < x.rows; i++) {
+      for (let j = 0; j < activeDims.length; j++) {
+        result.set(i, j, x.get(i, activeDims[j]));
       }
     }
-    const L = Matrix.eye(n);
-    const U = Matrix.zeros(n, n);
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        if (j < i) {
-          L.set(i, j, M.get(i, j));
-        } else {
-          U.set(i, j, M.get(i, j));
-        }
-      }
-    }
-    return { L, U, perm };
+    return result;
   }
-  function solveLU(A, b) {
-    const n = A.rows;
-    const { L, U, perm } = lu(A);
-    const x = Matrix.zeros(n, b.cols);
-    for (let col = 0; col < b.cols; col++) {
-      const pb = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        pb[i] = b.get(perm[i], col);
-      }
-      const y = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        let s = pb[i];
-        for (let j = 0; j < i; j++) {
-          s -= L.get(i, j) * y[j];
-        }
-        y[i] = s;
-      }
-      const xCol = new Float64Array(n);
-      for (let i = n - 1; i >= 0; i--) {
-        let s = y[i];
-        for (let j = i + 1; j < n; j++) {
-          s -= U.get(i, j) * xCol[j];
-        }
-        xCol[i] = s / U.get(i, i);
-      }
-      for (let i = 0; i < n; i++) {
-        x.set(i, col, xCol[i]);
-      }
+  var ActiveDimsKernel = class {
+    base;
+    activeDims;
+    constructor(base, activeDims) {
+      this.base = base;
+      this.activeDims = activeDims;
     }
-    return x;
+    compute(x1, x2) {
+      return this.base.compute(
+        extractActiveDims(x1, this.activeDims),
+        extractActiveDims(x2, this.activeDims)
+      );
+    }
+    computeDiag(x) {
+      if (this.base.computeDiag) {
+        return this.base.computeDiag(extractActiveDims(x, this.activeDims));
+      }
+      const K = this.compute(x, x);
+      const diag = new Float64Array(x.rows);
+      for (let i = 0; i < x.rows; i++) diag[i] = K.get(i, i);
+      return diag;
+    }
+  };
+  var AdditiveKernel = class {
+    kernels;
+    constructor(kernels) {
+      this.kernels = kernels;
+    }
+    compute(x1, x2) {
+      const result = this.kernels[0].compute(x1, x2);
+      for (let k = 1; k < this.kernels.length; k++) {
+        const K = this.kernels[k].compute(x1, x2);
+        for (let i = 0; i < result.data.length; i++) {
+          result.data[i] += K.data[i];
+        }
+      }
+      return result;
+    }
+    computeDiag(x) {
+      const diag = kernelDiag(this.kernels[0], x);
+      for (let k = 1; k < this.kernels.length; k++) {
+        const d = kernelDiag(this.kernels[k], x);
+        for (let i = 0; i < diag.length; i++) diag[i] += d[i];
+      }
+      return diag;
+    }
+  };
+  var ProductKernel = class {
+    kernels;
+    constructor(kernels) {
+      this.kernels = kernels;
+    }
+    compute(x1, x2) {
+      const result = this.kernels[0].compute(x1, x2);
+      for (let k = 1; k < this.kernels.length; k++) {
+        const K = this.kernels[k].compute(x1, x2);
+        for (let i = 0; i < result.data.length; i++) {
+          result.data[i] *= K.data[i];
+        }
+      }
+      return result;
+    }
+    computeDiag(x) {
+      const diag = kernelDiag(this.kernels[0], x);
+      for (let k = 1; k < this.kernels.length; k++) {
+        const d = kernelDiag(this.kernels[k], x);
+        for (let i = 0; i < diag.length; i++) diag[i] *= d[i];
+      }
+      return diag;
+    }
+  };
+  function kernelDiag(kernel, x) {
+    if (kernel.computeDiag) {
+      return kernel.computeDiag(x);
+    }
+    const K = kernel.compute(x, x);
+    const diag = new Float64Array(x.rows);
+    for (let i = 0; i < x.rows; i++) diag[i] = K.get(i, i);
+    return diag;
   }
 
-  // src/linalg/ops.ts
-  function transpose(a) {
-    const result = new Matrix(a.cols, a.rows);
-    for (let i = 0; i < a.rows; i++) {
-      for (let j = 0; j < a.cols; j++) {
-        result.data[j * a.rows + i] = a.data[i * a.cols + j];
+  // src/models/gp.ts
+  var ExactGP = class {
+    kernel;
+    mean;
+    inputTransform;
+    inputWarp;
+    outcomeTransform;
+    trainXNorm;
+    L;
+    alpha;
+    constructor(trainX, trainY, kernel, mean, noiseVariance, inputTransform, outcomeTransform, inputWarp) {
+      this.kernel = kernel;
+      this.mean = mean;
+      this.inputTransform = inputTransform ?? null;
+      this.inputWarp = inputWarp ?? null;
+      this.outcomeTransform = outcomeTransform ?? null;
+      let xNorm = inputTransform ? inputTransform.forward(trainX) : trainX.clone();
+      if (inputWarp) {
+        xNorm = inputWarp.forward(xNorm);
       }
+      this.trainXNorm = xNorm;
+      const K = kernel.compute(this.trainXNorm, this.trainXNorm);
+      if (typeof noiseVariance === "number") {
+        K.addDiag(noiseVariance);
+      } else {
+        K.addDiagVec(noiseVariance);
+      }
+      this.L = cholesky(K);
+      const meanVals = mean.forward(this.trainXNorm);
+      const residuals = new Matrix(trainY.rows, 1);
+      for (let i = 0; i < trainY.rows; i++) {
+        residuals.data[i] = trainY.get(i, 0) - meanVals.data[i];
+      }
+      this.alpha = solveCholesky(this.L, residuals);
     }
-    return result;
-  }
-  function matmul(a, b) {
-    const result = new Matrix(a.rows, b.cols);
-    for (let i = 0; i < a.rows; i++) {
-      for (let k = 0; k < a.cols; k++) {
-        const aik = a.data[i * a.cols + k];
-        if (aik === 0) continue;
-        for (let j = 0; j < b.cols; j++) {
-          result.data[i * b.cols + j] += aik * b.data[k * b.cols + j];
+    /** Transform test inputs through normalize + warp pipeline. */
+    transformInputs(testX) {
+      let testXNorm = this.inputTransform ? this.inputTransform.forward(testX) : testX;
+      if (this.inputWarp) {
+        testXNorm = this.inputWarp.forward(testXNorm);
+      }
+      return testXNorm;
+    }
+    /** Compute V = L⁻¹ @ K*ᵀ for a set of transformed test points. */
+    computeV(Kstar, nTest) {
+      const KstarT = new Matrix(this.trainXNorm.rows, nTest);
+      for (let i = 0; i < Kstar.rows; i++) {
+        for (let j = 0; j < Kstar.cols; j++) {
+          KstarT.set(j, i, Kstar.get(i, j));
         }
       }
+      return forwardSolve(this.L, KstarT);
     }
-    return result;
-  }
-  function add(a, b) {
-    const result = new Matrix(a.rows, a.cols);
-    for (let i = 0; i < a.data.length; i++) {
-      result.data[i] = a.data[i] + b.data[i];
+    predict(testX) {
+      const testXNorm = this.transformInputs(testX);
+      const Kstar = this.kernel.compute(testXNorm, this.trainXNorm);
+      const meanPrior = this.mean.forward(testXNorm);
+      const mu = new Float64Array(testX.rows);
+      for (let i = 0; i < testX.rows; i++) {
+        let dot = 0;
+        for (let j = 0; j < this.trainXNorm.rows; j++) {
+          dot += Kstar.get(i, j) * this.alpha.get(j, 0);
+        }
+        mu[i] = meanPrior.data[i] + dot;
+      }
+      const kssDiag = kernelDiag(this.kernel, testXNorm);
+      const V = this.computeV(Kstar, testX.rows);
+      const variance = new Float64Array(testX.rows);
+      for (let i = 0; i < testX.rows; i++) {
+        let vSq = 0;
+        for (let j = 0; j < this.trainXNorm.rows; j++) {
+          const vji = V.get(j, i);
+          vSq += vji * vji;
+        }
+        variance[i] = Math.max(0, kssDiag[i] - vSq);
+      }
+      if (this.outcomeTransform) {
+        for (let i = 0; i < mu.length; i++) {
+          const ut = this.outcomeTransform.untransform(mu[i], variance[i]);
+          mu[i] = ut.mean;
+          variance[i] = ut.variance;
+        }
+      }
+      return { mean: mu, variance };
     }
-    return result;
-  }
-  function scale(a, s) {
-    const result = new Matrix(a.rows, a.cols);
-    for (let i = 0; i < a.data.length; i++) {
-      result.data[i] = a.data[i] * s;
+    /**
+     * Analytic Leave-One-Out Cross-Validation predictions (Rasmussen & Williams, Eq. 5.12).
+     *
+     * LOO mean:     μ_LOO(i) = y_i - α_i / [K⁻¹]_ii
+     * LOO variance: σ²_LOO(i) = 1 / [K⁻¹]_ii
+     *
+     * where α = K⁻¹(y - m(X)) and K = K(X,X) + σ²I.
+     * No refitting required — computed from the full GP's Cholesky factor.
+     *
+     * Returns predictions in model-internal space (before outcome untransform).
+     * Caller (Predictor) is responsible for applying outcome + adapter untransforms.
+     */
+    loocvPredictions(trainY) {
+      const n = this.L.rows;
+      const diagKinv = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = new Float64Array(n);
+        for (let row = 0; row < n; row++) {
+          let s = row === i ? 1 : 0;
+          for (let j = 0; j < row; j++) {
+            s -= this.L.get(row, j) * x[j];
+          }
+          x[row] = s / this.L.get(row, row);
+        }
+        let sumSq = 0;
+        for (let j = 0; j < n; j++) sumSq += x[j] * x[j];
+        diagKinv[i] = sumSq;
+      }
+      const mean = new Float64Array(n);
+      const variance = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const yi = trainY.get(i, 0);
+        mean[i] = yi - this.alpha.get(i, 0) / diagKinv[i];
+        variance[i] = Math.max(0, 1 / diagKinv[i]);
+      }
+      if (this.outcomeTransform) {
+        for (let i = 0; i < n; i++) {
+          const ut = this.outcomeTransform.untransform(mean[i], variance[i]);
+          mean[i] = ut.mean;
+          variance[i] = ut.variance;
+        }
+      }
+      return { mean, variance };
     }
-    return result;
+    /**
+     *
+     * Cov(f(x_i), f(x_ref)) = k(x_i, x_ref) - v_i · v_ref
+     * where v = L⁻¹ @ k(X, x)
+     *
+     * Note: returns covariance in the MODEL's transformed space (before outcome
+     * untransform). For Standardize this scales by std²; for nonlinear transforms
+     * the covariance in original space requires additional delta-method terms.
+     * For relativization, the Standardize scaling cancels out in the ratio.
+     */
+    predictCovarianceWith(testX, refX) {
+      const testXNorm = this.transformInputs(testX);
+      const refXNorm = this.transformInputs(refX);
+      const KstarTest = this.kernel.compute(testXNorm, this.trainXNorm);
+      const KstarRef = this.kernel.compute(refXNorm, this.trainXNorm);
+      const Vtest = this.computeV(KstarTest, testX.rows);
+      const Vref = this.computeV(KstarRef, refX.rows);
+      const Ktr = this.kernel.compute(testXNorm, refXNorm);
+      const n = testX.rows;
+      const covariance = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        let vDot = 0;
+        for (let j = 0; j < this.trainXNorm.rows; j++) {
+          vDot += Vtest.get(j, i) * Vref.get(j, 0);
+        }
+        covariance[i] = Ktr.get(i, 0) - vDot;
+      }
+      if (this.outcomeTransform) {
+        for (let i = 0; i < n; i++) {
+          covariance[i] = this.outcomeTransform.untransformCovariance(covariance[i]);
+        }
+      }
+      return covariance;
+    }
+  };
+
+  // src/means/constant.ts
+  var ConstantMean = class {
+    constant;
+    constructor(constant) {
+      this.constant = constant;
+    }
+    forward(x) {
+      const result = new Matrix(x.rows, 1);
+      for (let i = 0; i < x.rows; i++) {
+        result.data[i] = this.constant;
+      }
+      return result;
+    }
+  };
+
+  // src/transforms/normalize.ts
+  function identityInputTransform(d) {
+    return {
+      offset: new Array(d).fill(0),
+      coefficient: new Array(d).fill(1)
+    };
   }
-  function dot(a, b) {
-    let s = 0;
-    for (let i = 0; i < a.length; i++) s += a[i] * b[i];
-    return s;
+  function boundsInputTransform(bounds) {
+    return {
+      offset: bounds.map((b) => b[0]),
+      coefficient: bounds.map((b) => b[1] - b[0])
+    };
+  }
+  var InputNormalize = class {
+    offset;
+    coefficient;
+    constructor(offset, coefficient) {
+      this.offset = Float64Array.from(offset);
+      this.coefficient = Float64Array.from(coefficient);
+    }
+    forward(X) {
+      const result = new Matrix(X.rows, X.cols);
+      for (let i = 0; i < X.rows; i++) {
+        for (let j = 0; j < X.cols; j++) {
+          result.set(i, j, (X.get(i, j) - this.offset[j]) / this.coefficient[j]);
+        }
+      }
+      return result;
+    }
+  };
+
+  // src/transforms/warp.ts
+  var InputWarp = class {
+    concentration0;
+    concentration1;
+    indices;
+    constructor(concentration0, concentration1, indices) {
+      this.concentration0 = Float64Array.from(concentration0);
+      this.concentration1 = Float64Array.from(concentration1);
+      this.indices = indices ?? null;
+    }
+    forward(X) {
+      const result = X.clone();
+      const dims = this.indices ?? Array.from({ length: X.cols }, (_, i) => i);
+      const eps = 1e-7;
+      const range = 1 - 2 * eps;
+      for (let i = 0; i < X.rows; i++) {
+        for (let k = 0; k < dims.length; k++) {
+          const j = dims[k];
+          const x = result.get(i, j);
+          const a = this.concentration1[k];
+          const b = this.concentration0[k];
+          const xn = Math.max(eps, Math.min(1 - eps, x * range + eps));
+          result.set(i, j, 1 - Math.pow(1 - Math.pow(xn, a), b));
+        }
+      }
+      return result;
+    }
+  };
+
+  // src/transforms/outcome.ts
+  var StandardizeUntransform = class {
+    mean;
+    std;
+    constructor(mean, std) {
+      this.mean = mean;
+      this.std = std;
+    }
+    untransform(mu, variance) {
+      return {
+        mean: this.mean + this.std * mu,
+        variance: this.std * this.std * variance
+      };
+    }
+    untransformCovariance(cov) {
+      return this.std * this.std * cov;
+    }
+  };
+  var LogUntransform = class {
+    untransform(mu, variance) {
+      return {
+        mean: Math.exp(mu + variance / 2),
+        variance: Math.expm1(variance) * Math.exp(2 * mu + variance)
+      };
+    }
+    untransformCovariance(cov) {
+      return cov;
+    }
+  };
+  var BilogUntransform = class {
+    untransform(mu, variance) {
+      const absmu = Math.abs(mu);
+      const deriv = Math.exp(absmu);
+      return {
+        mean: mu >= 0 ? Math.exp(mu) - 1 : -(Math.exp(-mu) - 1),
+        variance: deriv * deriv * variance
+      };
+    }
+    untransformCovariance(cov) {
+      return cov;
+    }
+  };
+  var PowerUntransform = class {
+    power;
+    scalerMean;
+    scalerScale;
+    /**
+     * @param power - Yeo-Johnson lambda parameter
+     * @param scalerMean - sklearn PowerTransformer's built-in scaler mean
+     * @param scalerScale - sklearn PowerTransformer's built-in scaler scale (std)
+     *
+     * sklearn's PowerTransformer standardizes AFTER the YJ transform.
+     * To invert: un-standardize first (z * scale + mean), then inverse YJ.
+     *
+     * Variance is propagated using CI-width matching (same as Ax), not delta
+     * method, because the YJ inverse can be highly nonlinear and the delta
+     * method underestimates variance.
+     */
+    constructor(power, scalerMean, scalerScale) {
+      this.power = power;
+      this.scalerMean = scalerMean;
+      this.scalerScale = scalerScale;
+    }
+    untransform(mu, variance) {
+      const fullInverse = (z) => {
+        let v = z;
+        if (this.scalerScale !== void 0 && this.scalerMean !== void 0) {
+          v = v * this.scalerScale + this.scalerMean;
+        }
+        return this._inverseYeoJohnson(v);
+      };
+      const newMean = fullInverse(mu);
+      const FAC = 1.959963984540054;
+      const sem = Math.sqrt(variance);
+      const right = fullInverse(mu + FAC * sem);
+      const left = fullInverse(mu - FAC * sem);
+      const newSem = (right - left) / (2 * FAC);
+      return {
+        mean: newMean,
+        variance: newSem * newSem
+      };
+    }
+    untransformCovariance(cov) {
+      return cov;
+    }
+    _inverseYeoJohnson(z) {
+      const lam = this.power;
+      if (z >= 0) {
+        if (Math.abs(lam) < 1e-10) {
+          return Math.exp(z) - 1;
+        }
+        return Math.pow(z * lam + 1, 1 / lam) - 1;
+      } else {
+        if (Math.abs(lam - 2) < 1e-10) {
+          return 1 - Math.exp(-z);
+        }
+        return 1 - Math.pow(-z * (2 - lam) + 1, 1 / (2 - lam));
+      }
+    }
+  };
+  var ChainedOutcomeUntransform = class {
+    transforms;
+    constructor(transforms) {
+      this.transforms = [...transforms].reverse();
+    }
+    untransform(mu, variance) {
+      let result = { mean: mu, variance };
+      for (const tf of this.transforms) {
+        result = tf.untransform(result.mean, result.variance);
+      }
+      return result;
+    }
+    untransformCovariance(cov) {
+      let result = cov;
+      for (const tf of this.transforms) {
+        result = tf.untransformCovariance(result);
+      }
+      return result;
+    }
+  };
+
+  // src/transforms/build_outcome.ts
+  function buildOutcomeUntransform(state) {
+    if (!("type" in state) || state.type === void 0 || state.type === "Standardize") {
+      const s = state;
+      const mean = Array.isArray(s.mean) ? s.mean[0] : s.mean;
+      const std = Array.isArray(s.std) ? s.std[0] : s.std;
+      return new StandardizeUntransform(mean, std);
+    }
+    switch (state.type) {
+      case "Log":
+        return new LogUntransform();
+      case "Bilog":
+        return new BilogUntransform();
+      case "Power":
+        return new PowerUntransform(state.power);
+      case "Chained": {
+        const transforms = state.transforms.map(buildOutcomeUntransform);
+        return new ChainedOutcomeUntransform(transforms);
+      }
+      default:
+        throw new Error(`Unknown outcome transform type: ${state.type}`);
+    }
   }
 
   // src/kernels/distance.ts
@@ -447,11 +747,11 @@ var axjs = (() => {
     }
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < m; j++) {
-        let dot2 = 0;
+        let dot = 0;
         for (let k = 0; k < d; k++) {
-          dot2 += x1.get(i, k) * x2.get(j, k);
+          dot += x1.get(i, k) * x2.get(j, k);
         }
-        const val = norms1[i] + norms2[j] - 2 * dot2;
+        const val = norms1[i] + norms2[j] - 2 * dot;
         result.set(i, j, Math.max(val, 0));
       }
     }
@@ -621,95 +921,378 @@ var axjs = (() => {
     }
   };
 
-  // src/kernels/composite.ts
-  function extractActiveDims(x, activeDims) {
-    const result = new Matrix(x.rows, activeDims.length);
-    for (let i = 0; i < x.rows; i++) {
-      for (let j = 0; j < activeDims.length; j++) {
-        result.set(i, j, x.get(i, activeDims[j]));
+  // src/kernels/build.ts
+  function _validateLengthscale(ls, kernelType) {
+    for (let i = 0; i < ls.length; i++) {
+      if (ls[i] <= 0 || !isFinite(ls[i])) {
+        throw new Error(
+          `${kernelType} kernel: lengthscale[${i}] = ${ls[i]} must be positive and finite`
+        );
+      }
+    }
+  }
+  function buildKernel(state) {
+    let kernel;
+    switch (state.type) {
+      case "Matern":
+        _validateLengthscale(state.lengthscale, "Matern");
+        kernel = new MaternKernel(state.lengthscale, state.nu ?? 2.5);
+        break;
+      case "RBF":
+        _validateLengthscale(state.lengthscale, "RBF");
+        kernel = new RBFKernel(state.lengthscale);
+        break;
+      case "Categorical":
+        kernel = new CategoricalKernel(
+          state.lengthscale && state.lengthscale.length > 1 ? state.lengthscale : state.lengthscale?.[0] ?? 1
+        );
+        break;
+      case "Scale":
+        kernel = new ScaleKernel(
+          buildKernel(state.base_kernel),
+          state.outputscale
+        );
+        break;
+      case "Additive":
+        kernel = new AdditiveKernel(state.kernels.map(buildKernel));
+        break;
+      case "Product":
+        kernel = new ProductKernel(state.kernels.map(buildKernel));
+        break;
+      default:
+        throw new Error(`Unknown kernel type: ${state.type}`);
+    }
+    if (state.type !== "Scale" && state.outputscale !== void 0) {
+      kernel = new ScaleKernel(kernel, state.outputscale);
+    }
+    if (state.active_dims) {
+      kernel = new ActiveDimsKernel(kernel, state.active_dims);
+    }
+    return kernel;
+  }
+
+  // src/models/single_task.ts
+  var SingleTaskGP = class {
+    gp;
+    trainDim;
+    trainY;
+    constructor(state) {
+      if (state.train_X.length === 0) {
+        throw new Error("train_X must not be empty");
+      }
+      const trainX = Matrix.from2D(state.train_X);
+      this.trainDim = trainX.cols;
+      this.trainY = Matrix.vector(state.train_Y);
+      const kernel = buildKernel(state.kernel);
+      const mean = new ConstantMean(state.mean_constant);
+      const noiseVariance = Array.isArray(state.noise_variance) ? Float64Array.from(state.noise_variance) : state.noise_variance;
+      const inputTransform = state.input_transform ? new InputNormalize(
+        state.input_transform.offset,
+        state.input_transform.coefficient
+      ) : void 0;
+      const inputWarp = state.input_warp ? new InputWarp(
+        state.input_warp.concentration0,
+        state.input_warp.concentration1,
+        state.input_warp.indices
+      ) : void 0;
+      const outcomeTransform = state.outcome_transform ? buildOutcomeUntransform(state.outcome_transform) : void 0;
+      this.gp = new ExactGP(
+        trainX,
+        this.trainY,
+        kernel,
+        mean,
+        noiseVariance,
+        inputTransform,
+        outcomeTransform,
+        inputWarp
+      );
+    }
+    predict(testPoints) {
+      if (testPoints.length === 0) {
+        throw new Error("testPoints must not be empty");
+      }
+      if (testPoints[0].length !== this.trainDim) {
+        throw new Error(
+          `Dimension mismatch: test has ${testPoints[0].length} dims, model trained on ${this.trainDim}`
+        );
+      }
+      const testX = Matrix.from2D(testPoints);
+      return this.gp.predict(testX);
+    }
+    /**
+     * Analytic LOO-CV predictions (Rasmussen & Williams, Eq. 5.12).
+     * Returns predictions in the same space as predict() (after outcome untransform).
+     */
+    loocvPredictions() {
+      return this.gp.loocvPredictions(this.trainY);
+    }
+    /**
+     * Compute posterior covariance between each test point and a reference point.
+     * Returns Cov(f(x_i), f(x_ref)) for use in relativization.
+     */
+    predictCovarianceWith(testPoints, refPoint) {
+      const testX = Matrix.from2D(testPoints);
+      const refX = Matrix.from2D([refPoint]);
+      return this.gp.predictCovarianceWith(testX, refX);
+    }
+  };
+
+  // src/models/model_list.ts
+  var ModelListGP = class {
+    outcomeNames;
+    models;
+    constructor(state) {
+      this.outcomeNames = state.outcome_names;
+      this.models = state.models.map((s) => new SingleTaskGP(s));
+    }
+    predict(testPoints) {
+      return this.models.map((m) => m.predict(testPoints));
+    }
+    predictOutcome(index, testPoints) {
+      return this.models[index].predict(testPoints);
+    }
+    /** Analytic LOO-CV predictions per outcome. */
+    loocvPredictions() {
+      return this.models.map((m) => m.loocvPredictions());
+    }
+    /**
+     * Posterior covariance with a reference point, per output.
+     * Each sub-model is independent, so no cross-output covariance.
+     */
+    predictCovarianceWith(testPoints, refPoint) {
+      return this.models.map(
+        (m) => m.predictCovarianceWith(testPoints, refPoint)
+      );
+    }
+  };
+
+  // src/linalg/lu.ts
+  function lu(A) {
+    const n = A.rows;
+    const M = A.clone();
+    const perm = Array.from({ length: n }, (_, i) => i);
+    for (let k = 0; k < n; k++) {
+      let maxVal = Math.abs(M.get(k, k));
+      let maxRow = k;
+      for (let i = k + 1; i < n; i++) {
+        const v = Math.abs(M.get(i, k));
+        if (v > maxVal) {
+          maxVal = v;
+          maxRow = i;
+        }
+      }
+      if (maxRow !== k) {
+        [perm[k], perm[maxRow]] = [perm[maxRow], perm[k]];
+        for (let j = 0; j < n; j++) {
+          const tmp = M.get(k, j);
+          M.set(k, j, M.get(maxRow, j));
+          M.set(maxRow, j, tmp);
+        }
+      }
+      const pivot = M.get(k, k);
+      if (Math.abs(pivot) < 1e-15) continue;
+      for (let i = k + 1; i < n; i++) {
+        const factor = M.get(i, k) / pivot;
+        M.set(i, k, factor);
+        for (let j = k + 1; j < n; j++) {
+          M.set(i, j, M.get(i, j) - factor * M.get(k, j));
+        }
+      }
+    }
+    const L = Matrix.eye(n);
+    const U = Matrix.zeros(n, n);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (j < i) {
+          L.set(i, j, M.get(i, j));
+        } else {
+          U.set(i, j, M.get(i, j));
+        }
+      }
+    }
+    return { L, U, perm };
+  }
+  function solveLU(A, b) {
+    const n = A.rows;
+    const { L, U, perm } = lu(A);
+    const x = Matrix.zeros(n, b.cols);
+    for (let col = 0; col < b.cols; col++) {
+      const pb = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        pb[i] = b.get(perm[i], col);
+      }
+      const y = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        let s = pb[i];
+        for (let j = 0; j < i; j++) {
+          s -= L.get(i, j) * y[j];
+        }
+        y[i] = s;
+      }
+      const xCol = new Float64Array(n);
+      for (let i = n - 1; i >= 0; i--) {
+        let s = y[i];
+        for (let j = i + 1; j < n; j++) {
+          s -= U.get(i, j) * xCol[j];
+        }
+        xCol[i] = s / U.get(i, i);
+      }
+      for (let i = 0; i < n; i++) {
+        x.set(i, col, xCol[i]);
+      }
+    }
+    return x;
+  }
+
+  // src/linalg/ops.ts
+  function transpose(a) {
+    const result = new Matrix(a.cols, a.rows);
+    for (let i = 0; i < a.rows; i++) {
+      for (let j = 0; j < a.cols; j++) {
+        result.data[j * a.rows + i] = a.data[i * a.cols + j];
       }
     }
     return result;
   }
-  var ActiveDimsKernel = class {
-    base;
-    activeDims;
-    constructor(base, activeDims) {
-      this.base = base;
-      this.activeDims = activeDims;
-    }
-    compute(x1, x2) {
-      return this.base.compute(
-        extractActiveDims(x1, this.activeDims),
-        extractActiveDims(x2, this.activeDims)
-      );
-    }
-    computeDiag(x) {
-      if (this.base.computeDiag) {
-        return this.base.computeDiag(extractActiveDims(x, this.activeDims));
-      }
-      const K = this.compute(x, x);
-      const diag = new Float64Array(x.rows);
-      for (let i = 0; i < x.rows; i++) diag[i] = K.get(i, i);
-      return diag;
-    }
-  };
-  var AdditiveKernel = class {
-    kernels;
-    constructor(kernels) {
-      this.kernels = kernels;
-    }
-    compute(x1, x2) {
-      const result = this.kernels[0].compute(x1, x2);
-      for (let k = 1; k < this.kernels.length; k++) {
-        const K = this.kernels[k].compute(x1, x2);
-        for (let i = 0; i < result.data.length; i++) {
-          result.data[i] += K.data[i];
+  function matmul(a, b) {
+    const result = new Matrix(a.rows, b.cols);
+    for (let i = 0; i < a.rows; i++) {
+      for (let k = 0; k < a.cols; k++) {
+        const aik = a.data[i * a.cols + k];
+        if (aik === 0) continue;
+        for (let j = 0; j < b.cols; j++) {
+          result.data[i * b.cols + j] += aik * b.data[k * b.cols + j];
         }
       }
-      return result;
     }
-    computeDiag(x) {
-      const diag = kernelDiag(this.kernels[0], x);
-      for (let k = 1; k < this.kernels.length; k++) {
-        const d = kernelDiag(this.kernels[k], x);
-        for (let i = 0; i < diag.length; i++) diag[i] += d[i];
+    return result;
+  }
+
+  // src/models/pairwise_gp.ts
+  var PairwiseGP = class {
+    kernel;
+    mean;
+    inputTransform;
+    inputWarp;
+    trainXNorm;
+    alpha;
+    likelihoodHess;
+    CKI;
+    constructor(trainX, utility, kernel, mean, likelihoodHess, inputTransform, inputWarp) {
+      this.kernel = kernel;
+      this.mean = mean;
+      this.inputTransform = inputTransform ?? null;
+      this.inputWarp = inputWarp ?? null;
+      this.likelihoodHess = likelihoodHess;
+      let xNorm = inputTransform ? inputTransform.forward(trainX) : trainX.clone();
+      if (this.inputWarp) {
+        xNorm = this.inputWarp.forward(xNorm);
       }
-      return diag;
+      this.trainXNorm = xNorm;
+      const K = kernel.compute(this.trainXNorm, this.trainXNorm);
+      const L = cholesky(K);
+      const meanVals = mean.forward(this.trainXNorm);
+      const residuals = new Matrix(utility.rows, 1);
+      for (let i = 0; i < utility.rows; i++) {
+        residuals.data[i] = utility.get(i, 0) - meanVals.data[i];
+      }
+      this.alpha = solveCholesky(L, residuals);
+      const CK = matmul(likelihoodHess, K);
+      this.CKI = CK;
+      this.CKI.addDiag(1);
     }
-  };
-  var ProductKernel = class {
-    kernels;
-    constructor(kernels) {
-      this.kernels = kernels;
+    /** Transform inputs through normalize + warp pipeline. */
+    transformInputs(testX) {
+      let testXNorm = this.inputTransform ? this.inputTransform.forward(testX) : testX;
+      if (this.inputWarp) {
+        testXNorm = this.inputWarp.forward(testXNorm);
+      }
+      return testXNorm;
     }
-    compute(x1, x2) {
-      const result = this.kernels[0].compute(x1, x2);
-      for (let k = 1; k < this.kernels.length; k++) {
-        const K = this.kernels[k].compute(x1, x2);
-        for (let i = 0; i < result.data.length; i++) {
-          result.data[i] *= K.data[i];
+    predict(testPoints) {
+      if (testPoints.length === 0) {
+        throw new Error("testPoints must not be empty");
+      }
+      if (testPoints[0].length !== this.trainXNorm.cols) {
+        throw new Error(
+          `Dimension mismatch: test has ${testPoints[0].length} dims, model trained on ${this.trainXNorm.cols}`
+        );
+      }
+      const testXNorm = this.transformInputs(Matrix.from2D(testPoints));
+      const Kstar = this.kernel.compute(testXNorm, this.trainXNorm);
+      const kssDiag = kernelDiag(this.kernel, testXNorm);
+      const meanPrior = this.mean.forward(testXNorm);
+      const mu = new Float64Array(testXNorm.rows);
+      for (let i = 0; i < testXNorm.rows; i++) {
+        let dot = 0;
+        for (let j = 0; j < this.trainXNorm.rows; j++) {
+          dot += Kstar.get(i, j) * this.alpha.get(j, 0);
         }
+        mu[i] = meanPrior.data[i] + dot;
       }
-      return result;
+      const KstarT = transpose(Kstar);
+      const C_KstarT = matmul(this.likelihoodHess, KstarT);
+      const fac = solveLU(this.CKI, C_KstarT);
+      const correction = matmul(Kstar, fac);
+      const variance = new Float64Array(testXNorm.rows);
+      for (let i = 0; i < testXNorm.rows; i++) {
+        variance[i] = Math.max(0, kssDiag[i] - correction.get(i, i));
+      }
+      return { mean: mu, variance };
     }
-    computeDiag(x) {
-      const diag = kernelDiag(this.kernels[0], x);
-      for (let k = 1; k < this.kernels.length; k++) {
-        const d = kernelDiag(this.kernels[k], x);
-        for (let i = 0; i < diag.length; i++) diag[i] *= d[i];
+    /**
+     * Posterior covariance between each test point and a reference point.
+     *
+     * For PairwiseGP (Laplace approximation):
+     *   Cov(f(a), f(b)) = k(a,b) - K(a,X) @ (CK+I)⁻¹ @ C @ K(X,b)
+     *
+     * where C = likelihood Hessian, K = prior covariance, CK+I is NOT symmetric.
+     */
+    predictCovarianceWith(testPoints, refPoint) {
+      const testXNorm = this.transformInputs(Matrix.from2D(testPoints));
+      const refXNorm = this.transformInputs(Matrix.from2D([refPoint]));
+      const KstarTest = this.kernel.compute(testXNorm, this.trainXNorm);
+      const KstarRef = this.kernel.compute(refXNorm, this.trainXNorm);
+      const KstarRefT = transpose(KstarRef);
+      const C_KstarRefT = matmul(this.likelihoodHess, KstarRefT);
+      const facRef = solveLU(this.CKI, C_KstarRefT);
+      const Ktr = this.kernel.compute(testXNorm, refXNorm);
+      const n = testPoints.length;
+      const covariance = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        let dot = 0;
+        for (let j = 0; j < this.trainXNorm.rows; j++) {
+          dot += KstarTest.get(i, j) * facRef.get(j, 0);
+        }
+        covariance[i] = Ktr.get(i, 0) - dot;
       }
-      return diag;
+      return covariance;
     }
   };
-  function kernelDiag(kernel, x) {
-    if (kernel.computeDiag) {
-      return kernel.computeDiag(x);
-    }
-    const K = kernel.compute(x, x);
-    const diag = new Float64Array(x.rows);
-    for (let i = 0; i < x.rows; i++) diag[i] = K.get(i, i);
-    return diag;
+  function createPairwiseGP(state) {
+    const trainX = Matrix.from2D(state.train_X);
+    const utility = Matrix.vector(state.utility);
+    const likelihoodHess = Matrix.from2D(state.likelihood_hess);
+    const kernel = buildKernel(state.kernel);
+    const mean = new ConstantMean(state.mean_constant);
+    const inputTransform = state.input_transform ? new InputNormalize(
+      state.input_transform.offset,
+      state.input_transform.coefficient
+    ) : void 0;
+    const inputWarp = state.input_warp ? new InputWarp(
+      state.input_warp.concentration0,
+      state.input_warp.concentration1,
+      state.input_warp.indices
+    ) : void 0;
+    return new PairwiseGP(
+      trainX,
+      utility,
+      kernel,
+      mean,
+      likelihoodHess,
+      inputTransform,
+      inputWarp
+    );
   }
 
   // src/kernels/multitask.ts
@@ -808,679 +1391,6 @@ var axjs = (() => {
       return diag;
     }
   };
-
-  // src/kernels/build.ts
-  function _validateLengthscale(ls, kernelType) {
-    for (let i = 0; i < ls.length; i++) {
-      if (ls[i] <= 0 || !isFinite(ls[i])) {
-        throw new Error(
-          `${kernelType} kernel: lengthscale[${i}] = ${ls[i]} must be positive and finite`
-        );
-      }
-    }
-  }
-  function buildKernel(state) {
-    let kernel;
-    switch (state.type) {
-      case "Matern":
-        _validateLengthscale(state.lengthscale, "Matern");
-        kernel = new MaternKernel(state.lengthscale, state.nu ?? 2.5);
-        break;
-      case "RBF":
-        _validateLengthscale(state.lengthscale, "RBF");
-        kernel = new RBFKernel(state.lengthscale);
-        break;
-      case "Categorical":
-        kernel = new CategoricalKernel(
-          state.lengthscale && state.lengthscale.length > 1 ? state.lengthscale : state.lengthscale?.[0] ?? 1
-        );
-        break;
-      case "Scale":
-        kernel = new ScaleKernel(
-          buildKernel(state.base_kernel),
-          state.outputscale
-        );
-        break;
-      case "Additive":
-        kernel = new AdditiveKernel(state.kernels.map(buildKernel));
-        break;
-      case "Product":
-        kernel = new ProductKernel(state.kernels.map(buildKernel));
-        break;
-      default:
-        throw new Error(`Unknown kernel type: ${state.type}`);
-    }
-    if (state.type !== "Scale" && state.outputscale !== void 0) {
-      kernel = new ScaleKernel(kernel, state.outputscale);
-    }
-    if (state.active_dims) {
-      kernel = new ActiveDimsKernel(kernel, state.active_dims);
-    }
-    return kernel;
-  }
-
-  // src/means/constant.ts
-  var ConstantMean = class {
-    constant;
-    constructor(constant) {
-      this.constant = constant;
-    }
-    forward(x) {
-      const result = new Matrix(x.rows, 1);
-      for (let i = 0; i < x.rows; i++) {
-        result.data[i] = this.constant;
-      }
-      return result;
-    }
-  };
-
-  // src/transforms/normalize.ts
-  var InputNormalize = class {
-    offset;
-    coefficient;
-    constructor(offset, coefficient) {
-      this.offset = Float64Array.from(offset);
-      this.coefficient = Float64Array.from(coefficient);
-    }
-    forward(X) {
-      const result = new Matrix(X.rows, X.cols);
-      for (let i = 0; i < X.rows; i++) {
-        for (let j = 0; j < X.cols; j++) {
-          result.set(i, j, (X.get(i, j) - this.offset[j]) / this.coefficient[j]);
-        }
-      }
-      return result;
-    }
-  };
-
-  // src/transforms/outcome.ts
-  var StandardizeUntransform = class {
-    mean;
-    std;
-    constructor(mean, std) {
-      this.mean = mean;
-      this.std = std;
-    }
-    untransform(mu, variance) {
-      return {
-        mean: this.mean + this.std * mu,
-        variance: this.std * this.std * variance
-      };
-    }
-  };
-  var LogUntransform = class {
-    untransform(mu, variance) {
-      return {
-        mean: Math.exp(mu + variance / 2),
-        variance: Math.expm1(variance) * Math.exp(2 * mu + variance)
-      };
-    }
-  };
-  var BilogUntransform = class {
-    untransform(mu, variance) {
-      const absmu = Math.abs(mu);
-      const deriv = Math.exp(absmu);
-      return {
-        mean: mu >= 0 ? Math.exp(mu) - 1 : -(Math.exp(-mu) - 1),
-        variance: deriv * deriv * variance
-      };
-    }
-  };
-  var PowerUntransform = class {
-    power;
-    scalerMean;
-    scalerScale;
-    /**
-     * @param power - Yeo-Johnson lambda parameter
-     * @param scalerMean - sklearn PowerTransformer's built-in scaler mean
-     * @param scalerScale - sklearn PowerTransformer's built-in scaler scale (std)
-     *
-     * sklearn's PowerTransformer standardizes AFTER the YJ transform.
-     * To invert: un-standardize first (z * scale + mean), then inverse YJ.
-     *
-     * Variance is propagated using CI-width matching (same as Ax), not delta
-     * method, because the YJ inverse can be highly nonlinear and the delta
-     * method underestimates variance.
-     */
-    constructor(power, scalerMean, scalerScale) {
-      this.power = power;
-      this.scalerMean = scalerMean;
-      this.scalerScale = scalerScale;
-    }
-    untransform(mu, variance) {
-      const fullInverse = (z) => {
-        let v = z;
-        if (this.scalerScale !== void 0 && this.scalerMean !== void 0) {
-          v = v * this.scalerScale + this.scalerMean;
-        }
-        return this._inverseYeoJohnson(v);
-      };
-      const newMean = fullInverse(mu);
-      const FAC = 1.959963984540054;
-      const sem = Math.sqrt(variance);
-      const right = fullInverse(mu + FAC * sem);
-      const left = fullInverse(mu - FAC * sem);
-      const newSem = (right - left) / (2 * FAC);
-      return {
-        mean: newMean,
-        variance: newSem * newSem
-      };
-    }
-    _inverseYeoJohnson(z) {
-      const lam = this.power;
-      if (z >= 0) {
-        if (Math.abs(lam) < 1e-10) {
-          return Math.exp(z) - 1;
-        }
-        return Math.pow(z * lam + 1, 1 / lam) - 1;
-      } else {
-        if (Math.abs(lam - 2) < 1e-10) {
-          return 1 - Math.exp(-z);
-        }
-        return 1 - Math.pow(-z * (2 - lam) + 1, 1 / (2 - lam));
-      }
-    }
-  };
-  var ChainedOutcomeUntransform = class {
-    transforms;
-    constructor(transforms) {
-      this.transforms = [...transforms].reverse();
-    }
-    untransform(mu, variance) {
-      let result = { mean: mu, variance };
-      for (const tf of this.transforms) {
-        result = tf.untransform(result.mean, result.variance);
-      }
-      return result;
-    }
-  };
-
-  // src/transforms/warp.ts
-  var InputWarp = class {
-    concentration0;
-    concentration1;
-    indices;
-    constructor(concentration0, concentration1, indices) {
-      this.concentration0 = Float64Array.from(concentration0);
-      this.concentration1 = Float64Array.from(concentration1);
-      this.indices = indices ?? null;
-    }
-    forward(X) {
-      const result = X.clone();
-      const dims = this.indices ?? Array.from({ length: X.cols }, (_, i) => i);
-      const eps = 1e-7;
-      const range = 1 - 2 * eps;
-      for (let i = 0; i < X.rows; i++) {
-        for (let k = 0; k < dims.length; k++) {
-          const j = dims[k];
-          const x = result.get(i, j);
-          const a = this.concentration1[k];
-          const b = this.concentration0[k];
-          const xn = Math.max(eps, Math.min(1 - eps, x * range + eps));
-          result.set(i, j, 1 - Math.pow(1 - Math.pow(xn, a), b));
-        }
-      }
-      return result;
-    }
-  };
-
-  // src/transforms/build_outcome.ts
-  function buildOutcomeUntransform(state) {
-    if (!("type" in state) || state.type === void 0 || state.type === "Standardize") {
-      const s = state;
-      const mean = Array.isArray(s.mean) ? s.mean[0] : s.mean;
-      const std = Array.isArray(s.std) ? s.std[0] : s.std;
-      return new StandardizeUntransform(mean, std);
-    }
-    switch (state.type) {
-      case "Log":
-        return new LogUntransform();
-      case "Bilog":
-        return new BilogUntransform();
-      case "Power":
-        return new PowerUntransform(state.power);
-      case "Chained": {
-        const transforms = state.transforms.map(buildOutcomeUntransform);
-        return new ChainedOutcomeUntransform(transforms);
-      }
-      default:
-        throw new Error(`Unknown outcome transform type: ${state.type}`);
-    }
-  }
-
-  // src/transforms/relativize.ts
-  function relativize(meanT, semT, meanC, semC, opts = {}) {
-    const {
-      covariance = 0,
-      biasCorrection = true,
-      asPercent = true,
-      controlAsConstant = false
-    } = opts;
-    if (meanT === meanC && semT === semC) {
-      return { mean: 0, sem: 0 };
-    }
-    const absMC = Math.abs(meanC);
-    if (absMC === 0) {
-      throw new Error(
-        "Cannot relativize: control mean is zero. Relative effects are undefined when the baseline is zero."
-      );
-    }
-    let rHat;
-    let sem;
-    if (controlAsConstant) {
-      rHat = (meanT - meanC) / absMC;
-      sem = semT / absMC;
-    } else {
-      rHat = (meanT - meanC) / absMC;
-      if (biasCorrection) {
-        rHat -= meanT * semC * semC / (absMC * absMC * absMC);
-      }
-      const c = meanT / meanC;
-      const varT = semT * semT;
-      const varC = semC * semC;
-      const relVar = (varT - 2 * c * covariance + c * c * varC) / (meanC * meanC);
-      sem = Math.sqrt(Math.max(0, relVar));
-    }
-    if (asPercent) {
-      rHat *= 100;
-      sem *= 100;
-    }
-    return { mean: rHat, sem };
-  }
-  function unrelativize(relMean, relSem, meanC, semC, opts = {}) {
-    const {
-      covariance = 0,
-      biasCorrection = true,
-      asPercent = true,
-      controlAsConstant = false
-    } = opts;
-    let rHat = relMean;
-    let rSem = relSem;
-    if (asPercent) {
-      rHat /= 100;
-      rSem /= 100;
-    }
-    const absMC = Math.abs(meanC);
-    if (absMC === 0) {
-      throw new Error("Cannot unrelativize: control mean is zero.");
-    }
-    let meanT;
-    let semT;
-    if (controlAsConstant) {
-      meanT = rHat * absMC + meanC;
-      semT = rSem * absMC;
-    } else {
-      meanT = rHat * absMC + meanC;
-      if (biasCorrection) {
-        const corrFactor = 1 - semC * semC / (absMC * absMC);
-        if (Math.abs(corrFactor) < 1e-15) {
-          throw new Error(
-            "Cannot unrelativize with bias correction: control SEM \u2248 |control mean|."
-          );
-        }
-        meanT /= corrFactor;
-      }
-      const c = meanT / meanC;
-      const relVar = rSem * rSem;
-      const varC = semC * semC;
-      const varT = relVar * meanC * meanC + 2 * c * covariance - c * c * varC;
-      semT = Math.sqrt(Math.max(0, varT));
-    }
-    return { mean: meanT, sem: semT };
-  }
-  function relativizePredictions(means, variances, sqMean, sqVariance, opts = {}, covariances) {
-    const n = means.length;
-    const relMeans = new Float64Array(n);
-    const relVariances = new Float64Array(n);
-    const sqSem = Math.sqrt(sqVariance);
-    for (let i = 0; i < n; i++) {
-      const sem = Math.sqrt(variances[i]);
-      const cov = covariances ? covariances[i] : 0;
-      const result = relativize(means[i], sem, sqMean, sqSem, {
-        ...opts,
-        covariance: cov
-      });
-      relMeans[i] = result.mean;
-      relVariances[i] = result.sem * result.sem;
-    }
-    return { mean: relMeans, variance: relVariances };
-  }
-
-  // src/models/gp.ts
-  var ExactGP = class {
-    kernel;
-    mean;
-    inputTransform;
-    inputWarp;
-    outcomeTransform;
-    trainXNorm;
-    L;
-    alpha;
-    constructor(trainX, trainY, kernel, mean, noiseVariance, inputTransform, outcomeTransform, inputWarp) {
-      this.kernel = kernel;
-      this.mean = mean;
-      this.inputTransform = inputTransform ?? null;
-      this.inputWarp = inputWarp ?? null;
-      this.outcomeTransform = outcomeTransform ?? null;
-      let xNorm = inputTransform ? inputTransform.forward(trainX) : trainX.clone();
-      if (inputWarp) {
-        xNorm = inputWarp.forward(xNorm);
-      }
-      this.trainXNorm = xNorm;
-      const K = kernel.compute(this.trainXNorm, this.trainXNorm);
-      if (typeof noiseVariance === "number") {
-        K.addDiag(noiseVariance);
-      } else {
-        K.addDiagVec(noiseVariance);
-      }
-      this.L = cholesky(K);
-      const meanVals = mean.forward(this.trainXNorm);
-      const residuals = new Matrix(trainY.rows, 1);
-      for (let i = 0; i < trainY.rows; i++) {
-        residuals.data[i] = trainY.get(i, 0) - meanVals.data[i];
-      }
-      this.alpha = solveCholesky(this.L, residuals);
-    }
-    /** Transform test inputs through normalize + warp pipeline. */
-    transformInputs(testX) {
-      let testXNorm = this.inputTransform ? this.inputTransform.forward(testX) : testX;
-      if (this.inputWarp) {
-        testXNorm = this.inputWarp.forward(testXNorm);
-      }
-      return testXNorm;
-    }
-    /** Compute V = L⁻¹ @ K*ᵀ for a set of transformed test points. */
-    computeV(Kstar, nTest) {
-      const KstarT = new Matrix(this.trainXNorm.rows, nTest);
-      for (let i = 0; i < Kstar.rows; i++) {
-        for (let j = 0; j < Kstar.cols; j++) {
-          KstarT.set(j, i, Kstar.get(i, j));
-        }
-      }
-      return forwardSolve(this.L, KstarT);
-    }
-    predict(testX) {
-      const testXNorm = this.transformInputs(testX);
-      const Kstar = this.kernel.compute(testXNorm, this.trainXNorm);
-      const meanPrior = this.mean.forward(testXNorm);
-      const mu = new Float64Array(testX.rows);
-      for (let i = 0; i < testX.rows; i++) {
-        let dot2 = 0;
-        for (let j = 0; j < this.trainXNorm.rows; j++) {
-          dot2 += Kstar.get(i, j) * this.alpha.get(j, 0);
-        }
-        mu[i] = meanPrior.data[i] + dot2;
-      }
-      const kssDiag = kernelDiag(this.kernel, testXNorm);
-      const V = this.computeV(Kstar, testX.rows);
-      const variance = new Float64Array(testX.rows);
-      for (let i = 0; i < testX.rows; i++) {
-        let vSq = 0;
-        for (let j = 0; j < this.trainXNorm.rows; j++) {
-          const vji = V.get(j, i);
-          vSq += vji * vji;
-        }
-        variance[i] = Math.max(0, kssDiag[i] - vSq);
-      }
-      if (this.outcomeTransform) {
-        for (let i = 0; i < mu.length; i++) {
-          const ut = this.outcomeTransform.untransform(mu[i], variance[i]);
-          mu[i] = ut.mean;
-          variance[i] = ut.variance;
-        }
-      }
-      return { mean: mu, variance };
-    }
-    /**
-     * Compute posterior covariance between each test point and a reference point.
-     *
-     * Cov(f(x_i), f(x_ref)) = k(x_i, x_ref) - v_i · v_ref
-     * where v = L⁻¹ @ k(X, x)
-     *
-     * Note: returns covariance in the MODEL's transformed space (before outcome
-     * untransform). For Standardize this scales by std²; for nonlinear transforms
-     * the covariance in original space requires additional delta-method terms.
-     * For relativization, the Standardize scaling cancels out in the ratio.
-     */
-    predictCovarianceWith(testX, refX) {
-      const testXNorm = this.transformInputs(testX);
-      const refXNorm = this.transformInputs(refX);
-      const KstarTest = this.kernel.compute(testXNorm, this.trainXNorm);
-      const KstarRef = this.kernel.compute(refXNorm, this.trainXNorm);
-      const Vtest = this.computeV(KstarTest, testX.rows);
-      const Vref = this.computeV(KstarRef, refX.rows);
-      const Ktr = this.kernel.compute(testXNorm, refXNorm);
-      const n = testX.rows;
-      const covariance = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        let vDot = 0;
-        for (let j = 0; j < this.trainXNorm.rows; j++) {
-          vDot += Vtest.get(j, i) * Vref.get(j, 0);
-        }
-        covariance[i] = Ktr.get(i, 0) - vDot;
-      }
-      if (this.outcomeTransform) {
-        const tf = this.outcomeTransform;
-        if (typeof tf.std === "number") {
-          const s2 = tf.std * tf.std;
-          for (let i = 0; i < n; i++) {
-            covariance[i] *= s2;
-          }
-        }
-      }
-      return covariance;
-    }
-  };
-
-  // src/models/single_task.ts
-  var SingleTaskGP = class {
-    gp;
-    trainDim;
-    constructor(state) {
-      if (state.train_X.length === 0) {
-        throw new Error("train_X must not be empty");
-      }
-      const trainX = Matrix.from2D(state.train_X);
-      this.trainDim = trainX.cols;
-      const trainY = Matrix.vector(state.train_Y);
-      const kernel = buildKernel(state.kernel);
-      const mean = new ConstantMean(state.mean_constant);
-      const noiseVariance = Array.isArray(state.noise_variance) ? Float64Array.from(state.noise_variance) : state.noise_variance;
-      const inputTransform = state.input_transform ? new InputNormalize(
-        state.input_transform.offset,
-        state.input_transform.coefficient
-      ) : void 0;
-      const inputWarp = state.input_warp ? new InputWarp(
-        state.input_warp.concentration0,
-        state.input_warp.concentration1,
-        state.input_warp.indices
-      ) : void 0;
-      const outcomeTransform = state.outcome_transform ? buildOutcomeUntransform(state.outcome_transform) : void 0;
-      this.gp = new ExactGP(
-        trainX,
-        trainY,
-        kernel,
-        mean,
-        noiseVariance,
-        inputTransform,
-        outcomeTransform,
-        inputWarp
-      );
-    }
-    predict(testPoints) {
-      if (testPoints.length === 0) {
-        throw new Error("testPoints must not be empty");
-      }
-      if (testPoints[0].length !== this.trainDim) {
-        throw new Error(
-          `Dimension mismatch: test has ${testPoints[0].length} dims, model trained on ${this.trainDim}`
-        );
-      }
-      const testX = Matrix.from2D(testPoints);
-      return this.gp.predict(testX);
-    }
-    /**
-     * Compute posterior covariance between each test point and a reference point.
-     * Returns Cov(f(x_i), f(x_ref)) for use in relativization.
-     */
-    predictCovarianceWith(testPoints, refPoint) {
-      const testX = Matrix.from2D(testPoints);
-      const refX = Matrix.from2D([refPoint]);
-      return this.gp.predictCovarianceWith(testX, refX);
-    }
-  };
-
-  // src/models/model_list.ts
-  var ModelListGP = class {
-    outcomeNames;
-    models;
-    constructor(state) {
-      this.outcomeNames = state.outcome_names;
-      this.models = state.models.map((s) => new SingleTaskGP(s));
-    }
-    predict(testPoints) {
-      return this.models.map((m) => m.predict(testPoints));
-    }
-    predictOutcome(index, testPoints) {
-      return this.models[index].predict(testPoints);
-    }
-    /**
-     * Posterior covariance with a reference point, per output.
-     * Each sub-model is independent, so no cross-output covariance.
-     */
-    predictCovarianceWith(testPoints, refPoint) {
-      return this.models.map(
-        (m) => m.predictCovarianceWith(testPoints, refPoint)
-      );
-    }
-  };
-
-  // src/models/pairwise_gp.ts
-  var PairwiseGP = class {
-    kernel;
-    mean;
-    inputTransform;
-    inputWarp;
-    trainXNorm;
-    alpha;
-    likelihoodHess;
-    CKI;
-    constructor(trainX, utility, kernel, mean, likelihoodHess, inputTransform, inputWarp) {
-      this.kernel = kernel;
-      this.mean = mean;
-      this.inputTransform = inputTransform ?? null;
-      this.inputWarp = inputWarp ?? null;
-      this.likelihoodHess = likelihoodHess;
-      let xNorm = inputTransform ? inputTransform.forward(trainX) : trainX.clone();
-      if (this.inputWarp) {
-        xNorm = this.inputWarp.forward(xNorm);
-      }
-      this.trainXNorm = xNorm;
-      const K = kernel.compute(this.trainXNorm, this.trainXNorm);
-      const L = cholesky(K);
-      const meanVals = mean.forward(this.trainXNorm);
-      const residuals = new Matrix(utility.rows, 1);
-      for (let i = 0; i < utility.rows; i++) {
-        residuals.data[i] = utility.get(i, 0) - meanVals.data[i];
-      }
-      this.alpha = solveCholesky(L, residuals);
-      const CK = matmul(likelihoodHess, K);
-      this.CKI = CK;
-      this.CKI.addDiag(1);
-    }
-    /** Transform inputs through normalize + warp pipeline. */
-    transformInputs(testX) {
-      let testXNorm = this.inputTransform ? this.inputTransform.forward(testX) : testX;
-      if (this.inputWarp) {
-        testXNorm = this.inputWarp.forward(testXNorm);
-      }
-      return testXNorm;
-    }
-    predict(testPoints) {
-      if (testPoints.length === 0) {
-        throw new Error("testPoints must not be empty");
-      }
-      if (testPoints[0].length !== this.trainXNorm.cols) {
-        throw new Error(
-          `Dimension mismatch: test has ${testPoints[0].length} dims, model trained on ${this.trainXNorm.cols}`
-        );
-      }
-      const testXNorm = this.transformInputs(Matrix.from2D(testPoints));
-      const Kstar = this.kernel.compute(testXNorm, this.trainXNorm);
-      const kssDiag = kernelDiag(this.kernel, testXNorm);
-      const meanPrior = this.mean.forward(testXNorm);
-      const mu = new Float64Array(testXNorm.rows);
-      for (let i = 0; i < testXNorm.rows; i++) {
-        let dot2 = 0;
-        for (let j = 0; j < this.trainXNorm.rows; j++) {
-          dot2 += Kstar.get(i, j) * this.alpha.get(j, 0);
-        }
-        mu[i] = meanPrior.data[i] + dot2;
-      }
-      const KstarT = transpose(Kstar);
-      const C_KstarT = matmul(this.likelihoodHess, KstarT);
-      const fac = solveLU(this.CKI, C_KstarT);
-      const correction = matmul(Kstar, fac);
-      const variance = new Float64Array(testXNorm.rows);
-      for (let i = 0; i < testXNorm.rows; i++) {
-        variance[i] = Math.max(0, kssDiag[i] - correction.get(i, i));
-      }
-      return { mean: mu, variance };
-    }
-    /**
-     * Posterior covariance between each test point and a reference point.
-     *
-     * For PairwiseGP (Laplace approximation):
-     *   Cov(f(a), f(b)) = k(a,b) - K(a,X) @ (CK+I)⁻¹ @ C @ K(X,b)
-     *
-     * where C = likelihood Hessian, K = prior covariance, CK+I is NOT symmetric.
-     */
-    predictCovarianceWith(testPoints, refPoint) {
-      const testXNorm = this.transformInputs(Matrix.from2D(testPoints));
-      const refXNorm = this.transformInputs(Matrix.from2D([refPoint]));
-      const KstarTest = this.kernel.compute(testXNorm, this.trainXNorm);
-      const KstarRef = this.kernel.compute(refXNorm, this.trainXNorm);
-      const KstarRefT = transpose(KstarRef);
-      const C_KstarRefT = matmul(this.likelihoodHess, KstarRefT);
-      const facRef = solveLU(this.CKI, C_KstarRefT);
-      const Ktr = this.kernel.compute(testXNorm, refXNorm);
-      const n = testPoints.length;
-      const covariance = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        let dot2 = 0;
-        for (let j = 0; j < this.trainXNorm.rows; j++) {
-          dot2 += KstarTest.get(i, j) * facRef.get(j, 0);
-        }
-        covariance[i] = Ktr.get(i, 0) - dot2;
-      }
-      return covariance;
-    }
-  };
-  function createPairwiseGP(state) {
-    const trainX = Matrix.from2D(state.train_X);
-    const utility = Matrix.vector(state.utility);
-    const likelihoodHess = Matrix.from2D(state.likelihood_hess);
-    const kernel = buildKernel(state.kernel);
-    const mean = new ConstantMean(state.mean_constant);
-    const inputTransform = state.input_transform ? new InputNormalize(
-      state.input_transform.offset,
-      state.input_transform.coefficient
-    ) : void 0;
-    const inputWarp = state.input_warp ? new InputWarp(
-      state.input_warp.concentration0,
-      state.input_warp.concentration1,
-      state.input_warp.indices
-    ) : void 0;
-    return new PairwiseGP(
-      trainX,
-      utility,
-      kernel,
-      mean,
-      likelihoodHess,
-      inputTransform,
-      inputWarp
-    );
-  }
 
   // src/models/multi_task.ts
   var MultiTaskGP = class {
@@ -1614,11 +1524,11 @@ var axjs = (() => {
       const n = testPoints.length;
       const mu = new Float64Array(n);
       for (let i = 0; i < n; i++) {
-        let dot2 = 0;
+        let dot = 0;
         for (let j = 0; j < this.trainXFull.rows; j++) {
-          dot2 += Kstar.get(i, j) * this.alpha.get(j, 0);
+          dot += Kstar.get(i, j) * this.alpha.get(j, 0);
         }
-        mu[i] = taskMean + dot2;
+        mu[i] = taskMean + dot;
       }
       const kssDiag = kernelDiag(this.kernel, testXNorm);
       const V = this.computeV(Kstar, n);
@@ -1782,6 +1692,104 @@ var axjs = (() => {
     }
   }
 
+  // src/transforms/relativize.ts
+  function relativize(meanT, semT, meanC, semC, opts = {}) {
+    const {
+      covariance = 0,
+      biasCorrection = true,
+      asPercent = true,
+      controlAsConstant = false
+    } = opts;
+    if (meanT === meanC && semT === semC) {
+      return { mean: 0, sem: 0 };
+    }
+    const absMC = Math.abs(meanC);
+    if (absMC === 0) {
+      throw new Error(
+        "Cannot relativize: control mean is zero. Relative effects are undefined when the baseline is zero."
+      );
+    }
+    let rHat;
+    let sem;
+    if (controlAsConstant) {
+      rHat = (meanT - meanC) / absMC;
+      sem = semT / absMC;
+    } else {
+      rHat = (meanT - meanC) / absMC;
+      if (biasCorrection) {
+        rHat -= meanT * semC * semC / (absMC * absMC * absMC);
+      }
+      const c = meanT / meanC;
+      const varT = semT * semT;
+      const varC = semC * semC;
+      const relVar = (varT - 2 * c * covariance + c * c * varC) / (meanC * meanC);
+      sem = Math.sqrt(Math.max(0, relVar));
+    }
+    if (asPercent) {
+      rHat *= 100;
+      sem *= 100;
+    }
+    return { mean: rHat, sem };
+  }
+  function unrelativize(relMean, relSem, meanC, semC, opts = {}) {
+    const {
+      covariance = 0,
+      biasCorrection = true,
+      asPercent = true,
+      controlAsConstant = false
+    } = opts;
+    let rHat = relMean;
+    let rSem = relSem;
+    if (asPercent) {
+      rHat /= 100;
+      rSem /= 100;
+    }
+    const absMC = Math.abs(meanC);
+    if (absMC === 0) {
+      throw new Error("Cannot unrelativize: control mean is zero.");
+    }
+    let meanT;
+    let semT;
+    if (controlAsConstant) {
+      meanT = rHat * absMC + meanC;
+      semT = rSem * absMC;
+    } else {
+      meanT = rHat * absMC + meanC;
+      if (biasCorrection) {
+        const corrFactor = 1 - semC * semC / (absMC * absMC);
+        if (Math.abs(corrFactor) < 1e-15) {
+          throw new Error(
+            "Cannot unrelativize with bias correction: control SEM \u2248 |control mean|."
+          );
+        }
+        meanT /= corrFactor;
+      }
+      const c = meanT / meanC;
+      const relVar = rSem * rSem;
+      const varC = semC * semC;
+      const varT = relVar * meanC * meanC + 2 * c * covariance - c * c * varC;
+      semT = Math.sqrt(Math.max(0, varT));
+    }
+    return { mean: meanT, sem: semT };
+  }
+  function relativizePredictions(means, variances, sqMean, sqVariance, opts = {}, covariances) {
+    const n = means.length;
+    const relMeans = new Float64Array(n);
+    const relVariances = new Float64Array(n);
+    const sqSem = Math.sqrt(sqVariance);
+    for (let i = 0; i < n; i++) {
+      const sem = Math.sqrt(variances[i]);
+      const cov = covariances ? covariances[i] : 0;
+      const result = relativize(means[i], sem, sqMean, sqSem, {
+        ...opts,
+        covariance: cov
+      });
+      relMeans[i] = result.mean;
+      relVariances[i] = result.sem * result.sem;
+    }
+    return { mean: relMeans, variance: relVariances };
+  }
+
   // src/predictor.ts
   var Predictor = class {
     outcomeNames;
@@ -1790,8 +1798,10 @@ var axjs = (() => {
     paramSpecs;
     statusQuoPoint;
     model;
+    _state;
     adapterUntransforms;
     constructor(exported) {
+      this._state = exported;
       this.model = loadModel(exported.model_state);
       this.paramSpecs = exported.search_space.parameters;
       this.paramNames = exported.search_space.parameters.map((p) => p.name);
@@ -1810,6 +1820,11 @@ var axjs = (() => {
         exported.adapter_transforms,
         this.outcomeNames
       );
+      validateModelState(exported.model_state, this.paramNames.length);
+    }
+    /** Observed trial data, if included in the ExperimentState. */
+    get observations() {
+      return this._state.observations;
     }
     /**
      * Predict at one or more points (raw parameter space).
@@ -1903,6 +1918,156 @@ var axjs = (() => {
       }
       return void 0;
     }
+    /**
+     * Get training data for an outcome, with Y un-standardized to raw space.
+     *
+     * @example
+     * ```ts
+     * const { X, Y, paramNames } = predictor.getTrainingData("accuracy");
+     * // X[i] is the i-th training point in raw parameter space
+     * // Y[i] is the un-standardized observed value
+     * ```
+     */
+    getTrainingData(outcomeName) {
+      const name = outcomeName ?? this.outcomeNames[0];
+      const ms = this._state.model_state;
+      const sub = getSubModel(ms, this.outcomeNames, name);
+      const trainX = sub.train_X;
+      const trainY = sub.train_Y;
+      if (!trainX || !trainY) {
+        return { X: [], Y: [], paramNames: this.paramNames };
+      }
+      const Y = this.untransformTrainY(name, trainY, sub);
+      return { X: trainX.map((row) => row.slice()), Y, paramNames: this.paramNames };
+    }
+    /**
+     * Analytic Leave-One-Out Cross-Validation (Rasmussen & Williams, Eq. 5.12).
+     *
+     * Returns LOO predictions and observed values in the original data space,
+     * with both model-level and adapter-level untransforms applied.
+     * No refitting required — computed analytically from the full GP.
+     *
+     * Supported for SingleTaskGP and ModelListGP. Throws for other model types.
+     *
+     * @example
+     * ```ts
+     * const loo = predictor.loocv("accuracy");
+     * // loo.observed[i] — actual value for training point i
+     * // loo.mean[i] — LOO predicted mean (point i held out)
+     * // loo.variance[i] — LOO predicted variance
+     * ```
+     */
+    loocv(outcomeName) {
+      const name = outcomeName ?? this.outcomeNames[0];
+      const td = this.getTrainingData(name);
+      let looPred;
+      if (this.model instanceof ModelListGP) {
+        const idx = this.outcomeNames.indexOf(name);
+        if (idx < 0) throw new Error(`Unknown outcome: ${name}`);
+        looPred = this.model.loocvPredictions()[idx];
+      } else if (this.model instanceof SingleTaskGP) {
+        looPred = this.model.loocvPredictions();
+      } else {
+        throw new Error(
+          `loocv() is only supported for SingleTaskGP and ModelListGP, got ${this._state.model_state.model_type}`
+        );
+      }
+      looPred = this.applyAdapterUntransform(name, looPred);
+      return {
+        observed: td.Y,
+        mean: Array.from(looPred.mean),
+        variance: Array.from(looPred.variance)
+      };
+    }
+    /**
+     * Returns null if no lengthscales are found (e.g., constant kernel).
+     *
+     * @example
+     * ```ts
+     * const ls = predictor.getLengthscales("loss");
+     * // ls = [0.3, 1.2, 0.05] — one per input dimension
+     * ```
+     */
+    getLengthscales(outcomeName) {
+      const name = outcomeName ?? this.outcomeNames[0];
+      const ms = this._state.model_state;
+      const sub = getSubModel(ms, this.outcomeNames, name);
+      return findLengthscales(sub.kernel ?? sub.data_kernel);
+    }
+    /**
+     * Rank input dimensions by importance (shorter lengthscale = more important).
+     * Returns dimensions sorted from most to least important.
+     *
+     * @example
+     * ```ts
+     * const dims = predictor.rankDimensionsByImportance("accuracy");
+     * // dims[0] = { dimIndex: 2, paramName: "lr", lengthscale: 0.05 }
+     * ```
+     */
+    rankDimensionsByImportance(outcomeName) {
+      const ls = this.getLengthscales(outcomeName);
+      if (!ls) return [];
+      const dims = ls.map((l, i) => ({
+        dimIndex: i,
+        paramName: this.paramNames[i] ?? `x${i}`,
+        lengthscale: l
+      }));
+      dims.sort((a, b) => a.lengthscale - b.lengthscale);
+      return dims;
+    }
+    /**
+     * Compute kernel correlation between two points for an outcome.
+     * Returns a value in [0, 1] where 1 means identical and 0 means far apart.
+     * Uses the RBF/Matern-style `exp(-0.5 * Σ((x_j - ref_j) / (coeff_j * ls_j))²)`.
+     * Choice parameters use a penalty of 4.0 for mismatches.
+     *
+     * @example
+     * ```ts
+     * const corr = predictor.kernelCorrelation([1, 2, 3], [1, 2, 4], "loss");
+     * // corr ≈ 0.87 — high correlation, differ only in dim 2
+     * ```
+     */
+    kernelCorrelation(point, refPoint, outcomeName) {
+      const name = outcomeName ?? this.outcomeNames[0];
+      const ms = this._state.model_state;
+      const sub = getSubModel(ms, this.outcomeNames, name);
+      const ls = findLengthscales(sub.kernel ?? sub.data_kernel);
+      const inputTf = sub.input_transform;
+      const params = this.paramSpecs;
+      let d2 = 0;
+      for (let j = 0; j < point.length; j++) {
+        if (params[j] && params[j].type === "choice") {
+          if (point[j] !== refPoint[j]) d2 += 4;
+          continue;
+        }
+        const diff = point[j] - refPoint[j];
+        const coeff = inputTf?.coefficient?.[j] ?? 1;
+        const lsj = ls && j < ls.length ? ls[j] : 1;
+        const scaled = diff / coeff / lsj;
+        d2 += scaled * scaled;
+      }
+      return Math.exp(-0.5 * d2);
+    }
+    /**
+     * Untransform raw train_Y to original data space.
+     *
+     * IMPORTANT: model_state.train_Y is NOT in the original data space.
+     * It has been transformed by TWO layers:
+     *   1. Adapter transforms (LogY, StandardizeY, etc.) — applied by Ax before BoTorch
+     *   2. Model-level outcome transforms (Standardize, Log, etc.) — within BoTorch
+     *
+     * This method reverses BOTH layers. Any new method that needs original-space
+     * Y values MUST use this — never read train_Y directly.
+     */
+    untransformTrainY(outcomeName, trainY, subModel) {
+      const outTf = subModel.outcome_transform;
+      let Y = unstandardizeY(trainY, outTf);
+      const adapterUt = this.adapterUntransforms?.get(outcomeName);
+      if (adapterUt) {
+        Y = Y.map((y) => adapterUt.untransform(y, 0).mean);
+      }
+      return Y;
+    }
     applyAdapterUntransform(outcomeName, result) {
       if (!this.adapterUntransforms) return result;
       const untransform = this.adapterUntransforms.get(outcomeName);
@@ -1975,542 +2140,62 @@ var axjs = (() => {
     }
     return map.size > 0 ? map : null;
   }
-
-  // src/acquisition/normal.ts
-  var SQRT2 = Math.SQRT2;
-  var SQRT2PI = Math.sqrt(2 * Math.PI);
-  var LOG_SQRT2PI = Math.log(SQRT2PI);
-  function normalPdf(x) {
-    return Math.exp(-0.5 * x * x) / SQRT2PI;
+  function getSubModel(ms, outcomeNames, outcomeName) {
+    if (ms.model_type === "ModelListGP") {
+      const idx = outcomeNames.indexOf(outcomeName);
+      return ms.models[Math.max(0, idx)];
+    }
+    return ms;
   }
-  function logNormalPdf(x) {
-    return -0.5 * x * x - LOG_SQRT2PI;
-  }
-  function normalCdf(x) {
-    return 0.5 * erfc(-x / SQRT2);
-  }
-  function logNormalCdf(x) {
-    if (x > 6) {
-      return -normalPdf(x) / x;
-    }
-    if (x < -6) {
-      const x2 = x * x;
-      return -0.5 * x2 - LOG_SQRT2PI - Math.log(-x) - 1 / x2 + 3 / (x2 * x2);
-    }
-    return Math.log(normalCdf(x));
-  }
-  function erfc(x) {
-    if (x < 0) return 2 - erfc(-x);
-    if (x < 0.5) {
-      return 1 - erf(x);
-    }
-    const t = 2 / (2 + x);
-    const ty = 4 * t - 2;
-    const c = [
-      -1.3026537197817094,
-      0.6419697923564902,
-      0.019476473204185836,
-      -0.00956151478680863,
-      -946595344482036e-18,
-      366839497852761e-18,
-      42523324806907e-18,
-      -20278578112534e-18,
-      -1624290004647e-18,
-      130365583558e-17,
-      15626441722e-18,
-      -85238095915e-18,
-      6529054439e-18,
-      5059343495e-18,
-      -991364156e-18,
-      -227365122e-18,
-      96467911e-18,
-      2394038e-18,
-      -6886027e-18,
-      894487e-18,
-      313092e-18,
-      -112708e-18,
-      381e-18,
-      7106e-18,
-      -1523e-18,
-      -94e-18,
-      121e-18,
-      -28e-18
-    ];
-    const ncof = c.length;
-    let d = 0;
-    let dd = 0;
-    for (let j = ncof - 1; j > 0; j--) {
-      const tmp = d;
-      d = ty * d - dd + c[j];
-      dd = tmp;
-    }
-    return t * Math.exp(-x * x + 0.5 * (c[0] + ty * d) - dd);
-  }
-  function erf(x) {
-    const x2 = x * x;
-    let sum = 1;
-    let term = 1;
-    for (let k = 1; k <= 20; k++) {
-      term *= -x2 / k;
-      sum += term / (2 * k + 1);
-    }
-    return 2 / Math.sqrt(Math.PI) * x * sum;
-  }
-
-  // src/acquisition/ucb.ts
-  var UpperConfidenceBound = class {
-    constructor(model, beta = 2) {
-      this.model = model;
-      this.beta = beta;
-    }
-    evaluate(candidates) {
-      const { mean, variance } = this.model.predict(candidates);
-      const n = mean.length;
-      const values = new Float64Array(n);
-      const sqrtBeta = Math.sqrt(this.beta);
-      for (let i = 0; i < n; i++) {
-        values[i] = mean[i] + sqrtBeta * Math.sqrt(variance[i]);
-      }
-      return values;
-    }
-  };
-
-  // src/acquisition/log_ei.ts
-  var LogExpectedImprovement = class {
-    constructor(model, bestF) {
-      this.model = model;
-      this.bestF = bestF;
-    }
-    evaluate(candidates) {
-      const { mean, variance } = this.model.predict(candidates);
-      const n = mean.length;
-      const values = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        const sigma = Math.sqrt(variance[i]);
-        if (sigma < 1e-12) {
-          values[i] = mean[i] > this.bestF ? Math.log(mean[i] - this.bestF) : -Infinity;
-          continue;
-        }
-        const z = (mean[i] - this.bestF) / sigma;
-        values[i] = Math.log(sigma) + logH(z);
-      }
-      return values;
-    }
-  };
-  var ExpectedImprovement = class {
-    constructor(model, bestF) {
-      this.model = model;
-      this.bestF = bestF;
-    }
-    evaluate(candidates) {
-      const { mean, variance } = this.model.predict(candidates);
-      const n = mean.length;
-      const values = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        const sigma = Math.sqrt(variance[i]);
-        if (sigma < 1e-12) {
-          values[i] = Math.max(0, mean[i] - this.bestF);
-          continue;
-        }
-        const z = (mean[i] - this.bestF) / sigma;
-        values[i] = Math.max(0, sigma * (z * normalCdf(z) + normalPdf(z)));
-      }
-      return values;
-    }
-  };
-  function logH(z) {
-    if (z > 0) {
-      const cdf = normalCdf(z);
-      const pdf = normalPdf(z);
-      return Math.log(z) + logNormalCdf(z) + Math.log1p(pdf / (z * cdf));
-    } else if (z === 0) {
-      return logNormalPdf(0);
-    } else {
-      const cdf = normalCdf(z);
-      const pdf = normalPdf(z);
-      if (pdf < 1e-300) return logNormalCdf(z);
-      return logNormalPdf(z) + Math.log1p(z * cdf / pdf);
-    }
-  }
-
-  // src/acquisition/posterior.ts
-  function posteriorCovariance(model, points) {
-    const n = points.length;
-    const Sigma = new Matrix(n, n);
-    for (let j = 0; j < n; j++) {
-      const cov = model.predictCovarianceWith(points, points[j]);
-      for (let i = 0; i < n; i++) {
-        Sigma.set(i, j, cov[i]);
+  function findLengthscales(k) {
+    if (!k) return null;
+    if (k.lengthscale) return k.lengthscale;
+    if (k.base_kernel) return findLengthscales(k.base_kernel);
+    if (k.kernels) {
+      for (const sub of k.kernels) {
+        const r = findLengthscales(sub);
+        if (r) return r;
       }
     }
-    return Sigma;
+    return null;
   }
-  function posteriorMean(model, points) {
-    return model.predict(points).mean;
+  function unstandardizeY(trainY, outTf) {
+    if (!outTf) return trainY.slice();
+    if ("mean" in outTf && outTf.mean !== void 0 && "std" in outTf) {
+      return trainY.map((y) => outTf.mean + outTf.std * y);
+    }
+    return trainY.slice();
   }
-
-  // src/acquisition/sample_mvn.ts
-  var Rng = class {
-    s;
-    constructor(seed = 42) {
-      this.s = new Uint32Array(4);
-      for (let i = 0; i < 4; i++) {
-        seed += 2654435769;
-        let t = seed;
-        t = Math.imul(t ^ t >>> 16, 569420461);
-        t = Math.imul(t ^ t >>> 15, 1935289751);
-        this.s[i] = (t ^ t >>> 15) >>> 0;
-      }
+  function validateModelState(state, numParams) {
+    const models = [];
+    if (state.model_type === "ModelListGP" && "models" in state) {
+      models.push(...state.models);
+    } else if (state.model_type === "SingleTaskGP" || state.model_type === "FixedNoiseGP") {
+      models.push(state);
     }
-    /** Uniform [0, 1) */
-    uniform() {
-      const result = this.s[0] + this.s[3];
-      const t = this.s[1] << 9;
-      this.s[2] ^= this.s[0];
-      this.s[3] ^= this.s[1];
-      this.s[1] ^= this.s[2];
-      this.s[0] ^= this.s[3];
-      this.s[2] ^= t;
-      this.s[3] = this.s[3] << 11 | this.s[3] >>> 21;
-      return (result >>> 0) / 4294967296;
-    }
-    /** Standard normal via Box-Muller transform. */
-    randn() {
-      const u1 = this.uniform();
-      const u2 = this.uniform();
-      return Math.sqrt(-2 * Math.log(u1 + 1e-300)) * Math.cos(2 * Math.PI * u2);
-    }
-    /** Fill a Float64Array with standard normal samples. */
-    randnArray(n) {
-      const arr = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        arr[i] = this.randn();
-      }
-      return arr;
-    }
-  };
-  function sampleMVN(mean, covariance, nSamples, rng, isCholesky = false) {
-    const d = mean.length;
-    const L = isCholesky ? covariance : cholesky(covariance);
-    const samples = new Matrix(nSamples, d);
-    for (let s = 0; s < nSamples; s++) {
-      const z = rng.randnArray(d);
-      for (let i = 0; i < d; i++) {
-        let val = mean[i];
-        for (let j = 0; j <= i; j++) {
-          val += L.get(i, j) * z[j];
-        }
-        samples.set(s, i, val);
-      }
-    }
-    return samples;
-  }
-
-  // src/acquisition/thompson.ts
-  var ThompsonSampling = class {
-    constructor(model, seed = 42) {
-      this.model = model;
-      this.rng = new Rng(seed);
-    }
-    rng;
-    evaluate(candidates) {
-      const mean = posteriorMean(this.model, candidates);
-      const Sigma = posteriorCovariance(this.model, candidates);
-      const sample = sampleMVN(mean, Sigma, 1, this.rng);
-      const n = candidates.length;
-      const values = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        values[i] = sample.get(0, i);
-      }
-      return values;
-    }
-  };
-  function thompsonSamples(model, candidates, nSamples, seed = 42) {
-    const mean = posteriorMean(model, candidates);
-    const Sigma = posteriorCovariance(model, candidates);
-    const rng = new Rng(seed);
-    return sampleMVN(mean, Sigma, nSamples, rng);
-  }
-
-  // src/acquisition/eubo.ts
-  var EUBO = class {
-    /**
-     * @param model     - PairwiseGP (or any GPModel modeling latent utility)
-     * @param nSamples  - Number of MC samples (default 256)
-     * @param seed      - RNG seed for reproducibility
-     */
-    constructor(model, nSamples = 256, seed = 42) {
-      this.model = model;
-      this.nSamples = nSamples;
-      this.rng = new Rng(seed);
-    }
-    rng;
-    /**
-     * Evaluate EUBO for a single menu of candidates.
-     *
-     * NOTE: Unlike other AFs, EUBO evaluates the JOINT value of the candidate set.
-     * The returned Float64Array has length 1 — it's the EUBO value for the
-     * entire menu, not per-candidate values.
-     *
-     * For per-candidate marginal contributions, see evaluateMarginal().
-     */
-    evaluate(candidates) {
-      const value = this.euboValue(candidates);
-      return Float64Array.from([value]);
-    }
-    /**
-     * Compute EUBO value: E[max_i u(x_i)] for the given candidate set.
-     */
-    euboValue(candidates) {
-      const q = candidates.length;
-      const mean = posteriorMean(this.model, candidates);
-      const Sigma = posteriorCovariance(this.model, candidates);
-      const samples = sampleMVN(mean, Sigma, this.nSamples, this.rng);
-      let sumMax = 0;
-      for (let s = 0; s < this.nSamples; s++) {
-        let maxU = -Infinity;
-        for (let i = 0; i < q; i++) {
-          const u = samples.get(s, i);
-          if (u > maxU) maxU = u;
-        }
-        sumMax += maxU;
-      }
-      return sumMax / this.nSamples;
-    }
-    /**
-     * Evaluate marginal contribution of each candidate to the menu.
-     *
-     * For each candidate x_i, computes:
-     *   Δ_i = EUBO({x_i} ∪ rest) - EUBO(rest)
-     *
-     * This is O(q · nSamples) using the same set of posterior samples.
-     * Useful for greedy menu construction.
-     */
-    evaluateMarginal(candidates) {
-      const q = candidates.length;
-      const mean = posteriorMean(this.model, candidates);
-      const Sigma = posteriorCovariance(this.model, candidates);
-      const samples = sampleMVN(mean, Sigma, this.nSamples, this.rng);
-      const marginals = new Float64Array(q);
-      for (let s = 0; s < this.nSamples; s++) {
-        let best = -Infinity;
-        let bestIdx = 0;
-        let secondBest = -Infinity;
-        for (let i = 0; i < q; i++) {
-          const u = samples.get(s, i);
-          if (u > best) {
-            secondBest = best;
-            best = u;
-            bestIdx = i;
-          } else if (u > secondBest) {
-            secondBest = u;
-          }
-        }
-        for (let i = 0; i < q; i++) {
-          if (i === bestIdx) {
-            marginals[i] += (best - secondBest) / this.nSamples;
-          }
+    for (let idx = 0; idx < models.length; idx++) {
+      const m = models[idx];
+      const prefix = models.length > 1 ? `[axjs] model ${idx}: ` : "[axjs] ";
+      if (m.input_transform) {
+        const d = m.train_X[0]?.length ?? 0;
+        if (m.input_transform.offset.length !== d) {
+          console.warn(
+            `${prefix}input_transform.offset has ${m.input_transform.offset.length} dims but train_X has ${d} cols`
+          );
         }
       }
-      return marginals;
-    }
-  };
-
-  // src/acquisition/optimize.ts
-  function optimizeAcqf(acqf, bounds, opts = {}) {
-    const {
-      rawSamples = 1024,
-      numRestarts = 10,
-      seed = 42,
-      useLBFGS = false,
-      lbfgsOptions = {},
-      returnAll = false
-    } = opts;
-    const d = bounds.length;
-    const rng = new Rng(seed);
-    const candidates = generateCandidates(d, bounds, rawSamples, rng);
-    const values = acqf.evaluate(candidates);
-    const indices = argsort(values);
-    const topK = Math.min(numRestarts, candidates.length);
-    let bestPoint = candidates[indices[0]];
-    let bestValue = values[indices[0]];
-    if (useLBFGS) {
-      for (let k = 0; k < topK; k++) {
-        const startPoint = candidates[indices[k]];
-        const result = lbfgsOptimize(acqf, startPoint, bounds, lbfgsOptions);
-        if (result.value > bestValue) {
-          bestValue = result.value;
-          bestPoint = result.point;
+      if (m.outcome_transform && "mean" in m.outcome_transform && m.train_Y.length > 1) {
+        const yMean = m.train_Y.reduce((a, b) => a + b, 0) / m.train_Y.length;
+        if (Math.abs(yMean) > 5) {
+          console.warn(
+            `${prefix}train_Y mean is ${yMean.toFixed(2)} but outcome_transform is Standardize \u2014 train_Y should be pre-standardized (near 0). Did you pass raw Y values?`
+          );
         }
       }
-    }
-    if (returnAll) {
-      const sortedCandidates = indices.map((i) => candidates[i]);
-      const sortedValues = new Float64Array(indices.length);
-      for (let i = 0; i < indices.length; i++) {
-        sortedValues[i] = values[indices[i]];
-      }
-      return {
-        point: bestPoint,
-        value: bestValue,
-        candidates: sortedCandidates,
-        values: sortedValues
-      };
-    }
-    return { point: bestPoint, value: bestValue };
-  }
-  function generateCandidates(d, bounds, n, rng) {
-    const candidates = [];
-    for (let i = 0; i < n; i++) {
-      const point = new Array(d);
-      for (let j = 0; j < d; j++) {
-        const [lo, hi] = bounds[j];
-        point[j] = lo + rng.uniform() * (hi - lo);
-      }
-      candidates.push(point);
-    }
-    return candidates;
-  }
-  function argsort(values) {
-    const indices = Array.from({ length: values.length }, (_, i) => i);
-    indices.sort((a, b) => values[b] - values[a]);
-    return indices;
-  }
-  function lbfgsOptimize(acqf, x0, bounds, opts = {}) {
-    const {
-      maxIter = 50,
-      fdEps = 1e-5,
-      historySize = 10,
-      ftol = 1e-8,
-      lr = 1
-    } = opts;
-    const d = x0.length;
-    let x = projectToBounds(x0.slice(), bounds);
-    let fx = evalSingle(acqf, x);
-    const S = [];
-    const Y = [];
-    const rhos = [];
-    let gPrev = finiteDiffGradient(acqf, x, bounds, fdEps);
-    for (let iter = 0; iter < maxIter; iter++) {
-      const dir = lbfgsDirection(gPrev, S, Y, rhos, historySize);
-      for (let j = 0; j < d; j++) dir[j] = -dir[j];
-      let step = lr;
-      const dirDotGrad = dotProduct(dir, gPrev);
-      let xNew = projectToBounds(stepAdd(x, dir, step), bounds);
-      let fNew = evalSingle(acqf, xNew);
-      for (let ls = 0; ls < 20; ls++) {
-        if (fNew >= fx + 1e-4 * step * dirDotGrad) break;
-        step *= 0.5;
-        xNew = projectToBounds(stepAdd(x, dir, step), bounds);
-        fNew = evalSingle(acqf, xNew);
-      }
-      if (Math.abs(fNew - fx) < ftol * (1 + Math.abs(fx))) {
-        if (fNew > fx) {
-          x = xNew;
-          fx = fNew;
-        }
-        break;
-      }
-      const gNew = finiteDiffGradient(acqf, xNew, bounds, fdEps);
-      const s = new Array(d);
-      const y = new Array(d);
-      for (let j = 0; j < d; j++) {
-        s[j] = xNew[j] - x[j];
-        y[j] = gNew[j] - gPrev[j];
-      }
-      const sy = dotProduct(s, y);
-      if (sy > 1e-10) {
-        if (S.length >= historySize) {
-          S.shift();
-          Y.shift();
-          rhos.shift();
-        }
-        S.push(s);
-        Y.push(y);
-        rhos.push(1 / sy);
-      }
-      x = xNew;
-      fx = fNew;
-      gPrev = gNew;
-    }
-    return { point: x, value: fx };
-  }
-  function lbfgsDirection(g, S, Y, rhos, _historySize) {
-    const d = g.length;
-    const m = S.length;
-    if (m === 0) return g.slice();
-    const q = g.slice();
-    const alphas = new Array(m);
-    for (let i = m - 1; i >= 0; i--) {
-      alphas[i] = rhos[i] * dotProduct(S[i], q);
-      for (let j = 0; j < d; j++) {
-        q[j] -= alphas[i] * Y[i][j];
+      if (typeof m.noise_variance === "number" && m.noise_variance <= 0) {
+        console.warn(`${prefix}noise_variance is ${m.noise_variance} (should be positive)`);
       }
     }
-    const yLast = Y[m - 1];
-    const sLast = S[m - 1];
-    const yy = dotProduct(yLast, yLast);
-    const gamma = dotProduct(sLast, yLast) / (yy + 1e-300);
-    for (let j = 0; j < d; j++) {
-      q[j] *= gamma;
-    }
-    for (let i = 0; i < m; i++) {
-      const beta = rhos[i] * dotProduct(Y[i], q);
-      for (let j = 0; j < d; j++) {
-        q[j] += (alphas[i] - beta) * S[i][j];
-      }
-    }
-    return q;
-  }
-  function finiteDiffGradient(acqf, x, bounds, eps) {
-    const d = x.length;
-    const grad = new Array(d);
-    for (let j = 0; j < d; j++) {
-      const xp = x.slice();
-      const xm = x.slice();
-      const lo = bounds[j][0];
-      const hi = bounds[j][1];
-      const step = Math.min(eps, (hi - lo) * 0.01);
-      if (x[j] + step > hi) {
-        xm[j] -= step;
-        const fp = evalSingle(acqf, x);
-        const fm = evalSingle(acqf, xm);
-        grad[j] = (fp - fm) / step;
-      } else if (x[j] - step < lo) {
-        xp[j] += step;
-        const fp = evalSingle(acqf, xp);
-        const fm = evalSingle(acqf, x);
-        grad[j] = (fp - fm) / step;
-      } else {
-        xp[j] += step;
-        xm[j] -= step;
-        const fp = evalSingle(acqf, xp);
-        const fm = evalSingle(acqf, xm);
-        grad[j] = (fp - fm) / (2 * step);
-      }
-    }
-    return grad;
-  }
-  function evalSingle(acqf, x) {
-    return acqf.evaluate([x])[0];
-  }
-  function projectToBounds(x, bounds) {
-    for (let j = 0; j < x.length; j++) {
-      x[j] = Math.max(bounds[j][0], Math.min(bounds[j][1], x[j]));
-    }
-    return x;
-  }
-  function stepAdd(x, dir, step) {
-    const result = new Array(x.length);
-    for (let j = 0; j < x.length; j++) {
-      result[j] = x[j] + step * dir[j];
-    }
-    return result;
-  }
-  function dotProduct(a, b) {
-    let sum = 0;
-    for (let i = 0; i < a.length; i++) sum += a[i] * b[i];
-    return sum;
   }
   return __toCommonJS(index_exports);
 })();
@@ -2531,30 +2216,10 @@ function formatParamValue(val, p) {
   if (isInteger(p)) return String(Math.round(val));
   return val.toFixed(3);
 }
-function findLS(k) {
-  if (!k) return null;
-  if (k.lengthscale) return k.lengthscale;
-  if (k.base_kernel) return findLS(k.base_kernel);
-  if (k.kernels) { for (var i=0;i<k.kernels.length;i++) { var r=findLS(k.kernels[i]); if(r) return r; } }
-  return null;
-}
-function extractLengthscales(ms) {
-  if (ms.model_type==='ModelListGP') return findLS(ms.models[0].kernel);
-  return findLS(ms.kernel || ms.data_kernel);
-}
-function rankDims(ms, outcomeNames, selectedOutcome) {
-  var subModel = (outcomeNames && selectedOutcome)
-    ? getModelForOutcome(ms, outcomeNames, selectedOutcome) : ms;
-  var ls = findLS(subModel.kernel || subModel.data_kernel);
-  if (!ls) return null;
-  var idx = ls.map(function(_,i){return i;});
-  idx.sort(function(a,b){return ls[a]-ls[b];});
-  return idx;
-}
-function computeDimOrder(ms, nDim, outcomeNames, selectedOutcome) {
-  var ranked = rankDims(ms, outcomeNames, selectedOutcome);
-  if (!ranked) return Array.from({length:nDim}, function(_,i){return i;});
-  var order = ranked.slice();
+function computeDimOrder(predictor, nDim, selectedOutcome) {
+  var ranked = predictor.rankDimensionsByImportance(selectedOutcome);
+  if (!ranked || ranked.length === 0) return Array.from({length:nDim}, function(_,i){return i;});
+  var order = ranked.map(function(d){return d.dimIndex;});
   if (order.length < nDim) {
     var inRanked = new Set(order);
     for (var di = 0; di < nDim; di++) {
@@ -2563,23 +2228,23 @@ function computeDimOrder(ms, nDim, outcomeNames, selectedOutcome) {
   }
   return order;
 }
-function closestToCenter(ms, bounds, params) {
-  var trainX = ms.model_type==='ModelListGP' ? ms.models[0].train_X : ms.train_X;
-  if (!trainX || trainX.length===0) return null;
-  var center = bounds.map(function(b, i){
-    if (params && params[i]) {
-      if (isChoice(params[i])) { var v = params[i].values; return v[Math.floor(v.length/2)]; }
-      if (isInteger(params[i])) return Math.round((b[0]+b[1])/2);
+// Kernel-distance relevance between two points (for neighbor highlighting).
+// Returns exp(-0.5*d²) where d² is scaled squared distance.
+function pointRelevance(pt, fixedValues, plottedDims, ls, inputTf, params) {
+  var d2 = 0;
+  for (var j = 0; j < fixedValues.length; j++) {
+    if (plottedDims.indexOf(j) >= 0) continue;
+    if (params && params[j] && isChoice(params[j])) {
+      if (pt[j] !== fixedValues[j]) d2 += 4;
+      continue;
     }
-    return (b[0]+b[1])/2;
-  });
-  var best=0, bestD=Infinity;
-  trainX.forEach(function(pt,i){
-    var d=0;
-    for(var j=0;j<center.length;j++){var rng=bounds[j][1]-bounds[j][0]||1; d+=Math.pow((pt[j]-center[j])/rng,2);}
-    if(d<bestD){bestD=d;best=i;}
-  });
-  return trainX[best].slice();
+    var diff = pt[j] - fixedValues[j];
+    var coeff = (inputTf && inputTf.coefficient) ? inputTf.coefficient[j] : 1;
+    var lsj = (ls && j < ls.length) ? ls[j] : 1;
+    var scaled = diff / coeff / lsj;
+    d2 += scaled * scaled;
+  }
+  return Math.exp(-0.5 * d2);
 }
 function normalizeFixture(data) {
   if (data.experiment) {
@@ -2600,18 +2265,6 @@ function normalizeFixture(data) {
   }
   return data;
 }
-function getTrainData(ms, outcomeNames, selectedOutcome) {
-  var outIdx = outcomeNames.indexOf(selectedOutcome);
-  var tX = ms.model_type === 'ModelListGP' ? ms.models[outIdx].train_X : ms.train_X;
-  var tY = ms.model_type === 'ModelListGP' ? ms.models[outIdx].train_Y : ms.train_Y;
-  var outTf = ms.model_type === 'ModelListGP'
-    ? ms.models[outIdx].outcome_transform : ms.outcome_transform;
-  return { trainX: tX, trainY: tY, outTf: outTf };
-}
-function untransformY(yVal, outTf) {
-  if (outTf && outTf.mean !== undefined) return outTf.mean + outTf.std * yVal;
-  return yVal;
-}
 function showTooltip(tt, html, ex, ey) {
   tt.innerHTML = html;
   tt.style.display = 'block';
@@ -2619,36 +2272,6 @@ function showTooltip(tt, html, ex, ey) {
   tt.style.top = (ey - 10) + 'px';
 }
 function hideTooltip(tt) { tt.style.display = 'none'; }
-
-// Get lengthscales and input_transform for a specific outcome
-function getModelForOutcome(ms, outcomeNames, selectedOutcome) {
-  if (ms.model_type === 'ModelListGP') {
-    return ms.models[outcomeNames.indexOf(selectedOutcome)];
-  }
-  return ms;
-}
-
-// Compute kernel-distance-based relevance of a training point to the current slice.
-// Returns exp(-d^2) where d^2 is the squared scaled distance over specified dims.
-// Uses steeper decay than RBF (exp(-d²) vs exp(-0.5d²)) so that only genuinely
-// on-slice points appear bright — prevents misleading bright dots off the GP curve.
-// plottedDims: array of dimension indices being plotted (excluded from distance)
-function pointRelevance(pt, fixedValues, plottedDims, ls, inputTf, params) {
-  var d2 = 0;
-  for (var j = 0; j < fixedValues.length; j++) {
-    if (plottedDims.indexOf(j) >= 0) continue;
-    if (params && params[j] && isChoice(params[j])) {
-      if (pt[j] !== fixedValues[j]) d2 += 4;
-      continue;
-    }
-    var diff = pt[j] - fixedValues[j];
-    var coeff = (inputTf && inputTf.coefficient) ? inputTf.coefficient[j] : 1;
-    var lsj = (ls && j < ls.length) ? ls[j] : 1;
-    var scaled = diff * coeff / lsj;
-    d2 += scaled * scaled;
-  }
-  return Math.exp(-d2);
-}
 
 </script>
 <script>
@@ -3043,7 +2666,7 @@ var __DEFAULT_FIXTURE__ = {
       "botorch_version": "0.17.2",
       "gpytorch_version": "1.15.2",
       "torch_version": "2.11.0.dev20260124",
-      "generated_at": "2026-03-16T15:28:43.774308+00:00",
+      "generated_at": "2026-03-17T03:14:09.607331+00:00",
       "seed": 46,
       "benchmark": "Hartmann"
     },
@@ -3221,6 +2844,7 @@ var fixedValues = [];
 var selectedOutcome = '';
 var globalYRange = {}; // per-outcome { min, max } for stable y-axis
 var dimOrder = []; // dims sorted by importance (smallest lengthscale first)
+var slicePinnedIdx = -1; // persists across renderPlots() calls
 
 var plotsDiv = document.getElementById('plots');
 var slidersDiv = document.getElementById('sliders');
@@ -3252,10 +2876,9 @@ function precomputeYRange() {
       if (upper > hi) hi = upper;
     }
     // Also include training Y values
-    var td = getTrainData(fixture.model_state, predictor.outcomeNames, name);
-    if (td.trainY) {
-      td.trainY.forEach(function(y) {
-        var yv = untransformY(Array.isArray(y) ? y[0] : y, td.outTf);
+    var td = predictor.getTrainingData(name);
+    if (td.Y) {
+      td.Y.forEach(function(yv) {
         if (yv < lo) lo = yv;
         if (yv > hi) hi = yv;
       });
@@ -3267,16 +2890,13 @@ function precomputeYRange() {
 
 function loadFixtureData(data) {
   fixture = normalizeFixture(data);
-  predictor = new Predictor({
-    search_space: fixture.search_space,
-    model_state: fixture.model_state
-  });
+  predictor = new Predictor(fixture);
 
   params = fixture.search_space.parameters;
   paramNames = predictor.paramNames;
   paramBounds = predictor.paramBounds;
-  fixedValues = closestToCenter(fixture.model_state, paramBounds, params)
-    || params.map(function(p) { return defaultParamValue(p); });
+  var _td = predictor.getTrainingData();
+  fixedValues = _td.X.length > 0 ? _td.X[0].slice() : params.map(function(p) { return defaultParamValue(p); });
 
   outcomeSelect.innerHTML = '';
   predictor.outcomeNames.forEach(function(name) {
@@ -3294,8 +2914,7 @@ function loadFixtureData(data) {
 }
 
 function updateDimOrder() {
-  dimOrder = computeDimOrder(fixture.model_state, paramNames.length,
-    predictor.outcomeNames, selectedOutcome);
+  dimOrder = computeDimOrder(predictor, paramNames.length, selectedOutcome);
   buildSliders();
   renderPlots();
 }
@@ -3309,12 +2928,6 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
 outcomeSelect.addEventListener('change', function() {
   selectedOutcome = outcomeSelect.value;
   updateDimOrder();
-});
-
-var nearbyOnly = true;
-document.getElementById('cbNearby').addEventListener('change', function() {
-  nearbyOnly = this.checked;
-  renderPlots();
 });
 
 function buildSliders() {
@@ -3483,17 +3096,11 @@ function renderPlots() {
     }
 
     // Training points with kernel-distance-based opacity
-    var td = getTrainData(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-    var subModel = getModelForOutcome(fixture.model_state, predictor.outcomeNames, selectedOutcome);
-    var ptLS = findLS(subModel.kernel || subModel.data_kernel);
-    var ptTf = subModel.input_transform;
+    var td = predictor.getTrainingData(selectedOutcome);
     var visiblePts = []; // track screen coords, data, and SVG refs for hover/click
-    if (td.trainX) {
-      td.trainX.forEach(function(pt, idx) {
-        var alpha = pointRelevance(pt, fixedValues, [dim], ptLS, ptTf, params);
-        if (nearbyOnly && alpha < 0.03) return;
-        var fillAlpha = nearbyOnly ? Math.max(0.10, Math.min(0.85, alpha)) : 0.85;
-        var yVal = untransformY(Array.isArray(td.trainY[idx]) ? td.trainY[idx][0] : td.trainY[idx], td.outTf);
+    if (td.X.length > 0) {
+      td.X.forEach(function(pt, idx) {
+        var yVal = td.Y[idx];
         var ptScreenX;
         if (dimIsChoice) {
           var ci = xs.indexOf(pt[dim]);
@@ -3514,12 +3121,11 @@ function renderPlots() {
           var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
           dot.setAttribute('cx', ptScreenX); dot.setAttribute('cy', ptScreenY);
           dot.setAttribute('r', '3');
-          dot.setAttribute('fill', 'rgba(255,80,80,' + fillAlpha.toFixed(3) + ')');
+          dot.setAttribute('fill', 'rgba(255,80,80,0.85)');
           dot.setAttribute('stroke', 'rgba(255,255,255,0.5)');
           dot.setAttribute('stroke-width', '1');
           svg.appendChild(dot);
-          visiblePts.push({ cx: ptScreenX, cy: ptScreenY, idx: idx, pt: pt, yVal: yVal,
-            alpha: alpha, fillAlpha: fillAlpha, dot: dot });
+          visiblePts.push({ cx: ptScreenX, cy: ptScreenY, idx: idx, pt: pt, yVal: yVal, dot: dot });
         }
       });
     }
@@ -3581,10 +3187,18 @@ function renderPlots() {
     container.appendChild(svg);
 
     // Attach hover/click to the container div
-    (function(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, ptLS, ptTf, dimParam, dimIsChoice) {
+    (function(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, dimParam, dimIsChoice) {
       var HOVER_R = 10; // pixel radius for point hit detection
-      var pinnedIdx = -1; // index into visiblePts, -1 = none
       var hoverHighlight = false;
+
+      // Resolve slicePinnedIdx (training point index) → visiblePts index
+      function pinnedVpIdx() {
+        if (slicePinnedIdx < 0) return -1;
+        for (var i = 0; i < visiblePts.length; i++) {
+          if (visiblePts[i].idx === slicePinnedIdx) return i;
+        }
+        return -1;
+      }
 
       function findHit(px, py) {
         for (var pi = 0; pi < visiblePts.length; pi++) {
@@ -3599,16 +3213,14 @@ function renderPlots() {
       // bright regardless of dimensionality. Uses (raw/max)^0.5 for gentle decay.
       function highlightNeighbors(activeVpIdx) {
         var active = visiblePts[activeVpIdx];
-        // First pass: compute raw relevances and find max
         var rawRels = [];
         var maxRel = 0;
         for (var i = 0; i < visiblePts.length; i++) {
           if (i === activeVpIdx) { rawRels.push(1); continue; }
-          var r = pointRelevance(visiblePts[i].pt, active.pt, [], ptLS, ptTf, params);
+          var r = predictor.kernelCorrelation(visiblePts[i].pt, active.pt, selectedOutcome);
           rawRels.push(r);
           if (r > maxRel) maxRel = r;
         }
-        // Second pass: render with relative scaling
         for (var i = 0; i < visiblePts.length; i++) {
           var vp = visiblePts[i];
           if (i === activeVpIdx) {
@@ -3627,22 +3239,24 @@ function renderPlots() {
         }
       }
 
-      // Revert all dots to slice-based opacity
       function clearHighlight() {
         for (var i = 0; i < visiblePts.length; i++) {
           var vp = visiblePts[i];
-          vp.dot.setAttribute('fill', 'rgba(255,80,80,' + vp.fillAlpha.toFixed(3) + ')');
+          vp.dot.setAttribute('fill', 'rgba(255,80,80,0.85)');
           vp.dot.setAttribute('stroke', 'rgba(255,255,255,0.5)');
           vp.dot.setAttribute('stroke-width', '1');
           vp.dot.setAttribute('r', '3');
         }
       }
 
+      // Restore highlight after re-render if a point was pinned
+      var pvIdx = pinnedVpIdx();
+      if (pvIdx >= 0) highlightNeighbors(pvIdx);
+
       container.addEventListener('mousemove', function(e) {
         var rect = container.getBoundingClientRect();
         var px = e.clientX - rect.left;
         var py = e.clientY - rect.top;
-        // Outside plot area
         if (px < pad.left || px > pad.left + pw) {
           hoverLine.style.display = 'none';
           hoverDot.style.display = 'none';
@@ -3654,13 +3268,11 @@ function renderPlots() {
 
         if (hitVpIdx >= 0) {
           var hitPt = visiblePts[hitVpIdx];
-          // Training point tooltip
           hoverLine.style.display = 'none';
           hoverDot.style.display = 'none';
           container.style.cursor = 'pointer';
 
-          // Highlight neighbors on hover (only if nothing is pinned)
-          if (pinnedIdx === -1) {
+          if (slicePinnedIdx === -1) {
             highlightNeighbors(hitVpIdx);
             hoverHighlight = true;
           }
@@ -3669,14 +3281,11 @@ function renderPlots() {
             '<span class="tt-val">y = ' + hitPt.yVal.toFixed(4) + '</span><br>' +
             paramNames.map(function(name, j) {
               return '<span class="tt-coord">' + name + '</span> = ' + formatParamValue(hitPt.pt[j], params[j]);
-            }).join('<br>') +
-            '<br>relevance: ' + (hitPt.alpha * 100).toFixed(0) + '%';
+            }).join('<br>');
           showTooltip(tooltip, html, e.clientX, e.clientY);
         } else {
-          // Curve tooltip
           container.style.cursor = 'crosshair';
-          // Clear hover highlight if not pinned
-          if (pinnedIdx === -1 && hoverHighlight) {
+          if (slicePinnedIdx === -1 && hoverHighlight) {
             clearHighlight();
             hoverHighlight = false;
           }
@@ -3715,23 +3324,21 @@ function renderPlots() {
         var hitVpIdx = findHit(px, py);
 
         if (hitVpIdx >= 0) {
-          if (pinnedIdx === hitVpIdx) {
-            // Click same point: unpin
-            pinnedIdx = -1;
+          var hitTrainIdx = visiblePts[hitVpIdx].idx;
+          if (slicePinnedIdx === hitTrainIdx) {
+            slicePinnedIdx = -1;
             clearHighlight();
           } else {
-            // Pin to this point and snap sliders to its coordinates
-            pinnedIdx = hitVpIdx;
+            slicePinnedIdx = hitTrainIdx;
             var clickedPt = visiblePts[hitVpIdx].pt;
             for (var j = 0; j < fixedValues.length; j++) fixedValues[j] = clickedPt[j];
             buildSliders();
             renderPlots();
-            return; // renderPlots rebuilds everything including highlights
+            return;
           }
         } else {
-          // Click empty space: unpin
-          if (pinnedIdx >= 0) {
-            pinnedIdx = -1;
+          if (slicePinnedIdx >= 0) {
+            slicePinnedIdx = -1;
             clearHighlight();
           }
         }
@@ -3743,13 +3350,12 @@ function renderPlots() {
         hoverDot.style.display = 'none';
         container.style.cursor = 'crosshair';
         hideTooltip(tooltip);
-        // Clear hover highlight, but keep pinned
-        if (pinnedIdx === -1 && hoverHighlight) {
+        if (slicePinnedIdx === -1 && hoverHighlight) {
           clearHighlight();
           hoverHighlight = false;
         }
       });
-    })(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, ptLS, ptTf, dimParam, dimIsChoice);
+    })(dim, xs, means, stds, sx, sy, hoverLine, hoverDot, lo, hi, pw, pad, container, svg, visiblePts, dimParam, dimIsChoice);
 
     plotsDiv.appendChild(container);
   }
