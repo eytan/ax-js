@@ -109,22 +109,24 @@ button:hover { background: #f0f0f0; }
 </head>
 <body>
 
-<h1>${axHomeLink}Ax Cockpit — Multi-Objective VSIP</h1>
-<p class="subtitle" id="subtitle">Loading...</p>
+<h1>${axHomeLink}Ax Cockpit</h1>
 
 <div class="controls">
-  <label>X axis <select id="selX"></select></label>
-  <label>Y axis <select id="selY"></select></label>
-  <label style="margin-left:8px">Status Quo: <select id="selSQ"></select></label>
-  <label style="margin-left:8px">Distance:
+  <label style="cursor:pointer"><input type="file" id="fileInput" accept=".json" style="display:none">
+    <span style="font-size:11px;padding:3px 8px;border-radius:6px;border:0.5px solid #d0d0d0;background:#fff;color:#333;cursor:pointer">import</span></label>
+  <button id="btnExport">export</button>
+  <span class="subtitle" id="subtitle" style="margin:0;flex:1"></span>
+  <label>X <select id="selX"></select></label>
+  <label>Y <select id="selY"></select></label>
+  <label>SQ <select id="selSQ"></select></label>
+  <label>Distance
     <select id="selDistMode">
-      <option value="euclidean">euclidean distance</option>
+      <option value="euclidean">euclidean</option>
       <option value="bi-objective" selected>bi-objective kernel</option>
-      <option value="kernel">kernel distance</option>
+      <option value="kernel">kernel</option>
     </select>
   </label>
   <button id="btnNewCand">+ candidate</button>
-  <button id="btnExport">export JSON</button>
 </div>
 
 <div class="main-area">
@@ -1333,16 +1335,40 @@ rpBars.addEventListener('click', function(e) {
     if (old) old.remove();
   }
 
-  // Dim the source row in the SVG
-  function dimSourceRow(name, dim) {
+  // Highlight the source row as "being dragged" — blue tint + slight dim
+  function styleSourceRow(name, dragging) {
     var svgEl = rpBars.querySelector('svg');
     if (!svgEl) return;
-    // Find all groups with data-drag-handle or data-outcome matching name
     var handles = svgEl.querySelectorAll('[data-drag-handle="' + name + '"]');
     var outcomes = svgEl.querySelectorAll('[data-outcome="' + name + '"]');
-    var opacity = dim ? '0.25' : '1';
-    handles.forEach(function(el) { el.setAttribute('opacity', opacity); });
-    outcomes.forEach(function(el) { el.setAttribute('opacity', opacity); });
+    if (dragging) {
+      handles.forEach(function(el) { el.setAttribute('opacity', '0.4'); });
+      outcomes.forEach(function(el) {
+        el.setAttribute('opacity', '0.4');
+        // Tint all text children blue
+        var texts = el.querySelectorAll('text');
+        texts.forEach(function(t) { t.setAttribute('data-orig-fill', t.getAttribute('fill') || ''); t.setAttribute('fill', '#4872f9'); });
+      });
+      // Also tint the drag handle dots blue
+      handles.forEach(function(el) {
+        var circles = el.querySelectorAll('circle');
+        circles.forEach(function(c) { c.setAttribute('fill', '#4872f9'); });
+      });
+    } else {
+      handles.forEach(function(el) { el.setAttribute('opacity', '1'); });
+      outcomes.forEach(function(el) {
+        el.setAttribute('opacity', '1');
+        var texts = el.querySelectorAll('text');
+        texts.forEach(function(t) {
+          var orig = t.getAttribute('data-orig-fill');
+          if (orig !== null) { t.setAttribute('fill', orig); t.removeAttribute('data-orig-fill'); }
+        });
+      });
+      handles.forEach(function(el) {
+        var circles = el.querySelectorAll('circle');
+        circles.forEach(function(c) { c.setAttribute('fill', '#bbb'); });
+      });
+    }
   }
 
   // Create a floating ghost showing the row label
@@ -1379,7 +1405,7 @@ rpBars.addEventListener('click', function(e) {
     lastTargetIdx = dragOrigIdx;
     rpBars.setPointerCapture(e.pointerId);
     rpBars.style.cursor = 'grabbing';
-    dimSourceRow(name, true);
+    styleSourceRow(name, true);
     createGhost(name, e.clientX, e.clientY);
     updateSvgIndicator(dragOrigIdx);
   });
@@ -1408,7 +1434,7 @@ rpBars.addEventListener('click', function(e) {
       rebuildDropdownOrder();
       showDeltoid(null);
     } else {
-      dimSourceRow(dragName, false);
+      styleSourceRow(dragName, false);
     }
 
     dragName = null;
@@ -1708,13 +1734,60 @@ selDistMode.addEventListener('change', function() { updateOpacities(); });
 document.getElementById('btnNewCand').addEventListener('click', createNewCandidate);
 document.getElementById('btnExport').addEventListener('click', exportCandidates);
 
+// Import candidates from JSON
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  file.text().then(function(text) {
+    try {
+      var data = JSON.parse(text);
+      if (!Array.isArray(data)) { alert('Expected a JSON array of candidates'); return; }
+      // Clear existing candidates
+      candidates = [];
+      nextCandidateId = 1;
+      var maxBatch = 0;
+      arms.forEach(function(a) { if (a.batchIndex > maxBatch) maxBatch = a.batchIndex; });
+      data.forEach(function(item, i) {
+        var pt = paramNames.map(function(p) { return item.parameters[p] || 0; });
+        candidates.push({
+          id: nextCandidateId++,
+          armName: item.arm_name || ('imported_' + i),
+          params: pt,
+          trialIndex: arms.length + i,
+          batchIndex: maxBatch + 1,
+          trialStatus: 'CANDIDATE',
+          generationMethod: item.generation_method || 'imported',
+          edited: false, preds: null, relData: null
+        });
+      });
+      computeAllRelData();
+      computePanelRange();
+      buildLegend();
+      updateSubtitle();
+      renderScatter();
+      showDeltoid(null);
+    } catch(err) { alert('Failed to parse JSON: ' + err.message); }
+  });
+  e.target.value = ''; // allow re-import of same file
+});
+
 // ── Subtitle ──
 function updateSubtitle() {
   var completed = arms.filter(function(a) { return a.trialStatus === 'COMPLETED'; }).length;
   var candCount = candidates.length;
-  document.getElementById('subtitle').textContent =
-    completed + ' completed \\u00B7 ' + candCount + ' candidates \\u00B7 ' +
-    '3 objectives \\u00B7 4 constraints \\u00B7 qEHVI';
+  var nObj = OPTIMIZATION_CONFIG.objectives.length;
+  var nCon = OPTIMIZATION_CONFIG.outcome_constraints.length;
+  // Count distinct batches
+  var batches = {};
+  arms.forEach(function(a) { batches[a.batchIndex] = true; });
+  var nBatch = Object.keys(batches).length;
+  var parts = [];
+  if (nBatch > 0) parts.push(nBatch + (nBatch === 1 ? ' batch' : ' batches'));
+  parts.push(completed + ' completed');
+  if (candCount > 0) parts.push(candCount + ' candidate' + (candCount > 1 ? 's' : ''));
+  parts.push(nObj + ' objective' + (nObj > 1 ? 's' : ''));
+  if (nCon > 0) parts.push(nCon + ' constraint' + (nCon > 1 ? 's' : ''));
+  document.getElementById('subtitle').textContent = parts.join(' \\u00B7 ');
 }
 
 // ── Init ──
