@@ -1270,10 +1270,10 @@ rpBars.addEventListener('click', function(e) {
 // ── Drag reordering of deltoid metrics ──
 (function() {
   var dragName = null;
-  var dragStartY = 0;
   var dragOrigIdx = -1;
-  var dropIndicator = null;
+  var lastTargetIdx = -1;
   var rowH = 30, topPad = 20;
+  var ghostEl = null; // floating clone of the row
 
   function findDragHandle(el) {
     while (el && el !== rpBars) {
@@ -1284,70 +1284,136 @@ rpBars.addEventListener('click', function(e) {
     return null;
   }
 
+  function getTargetIdx(e) {
+    var svgEl = rpBars.querySelector('svg');
+    if (!svgEl) return -1;
+    var svgRect = svgEl.getBoundingClientRect();
+    var localY = e.clientY - svgRect.top - topPad;
+    var idx = Math.round(localY / rowH);
+    return Math.max(0, Math.min(customMetricOrder.length - 1, idx));
+  }
+
+  // Insert a blue line + arrows into the SVG at a given row boundary
+  function updateSvgIndicator(targetIdx) {
+    var svgEl = rpBars.querySelector('svg');
+    if (!svgEl) return;
+    // Remove old indicator
+    var old = svgEl.querySelector('#drag-indicator');
+    if (old) old.remove();
+
+    var svgW = +svgEl.getAttribute('width') || 400;
+    var y = topPad + targetIdx * rowH;
+
+    var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.id = 'drag-indicator';
+    // Main line
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', '0'); line.setAttribute('x2', String(svgW));
+    line.setAttribute('y1', String(y)); line.setAttribute('y2', String(y));
+    line.setAttribute('stroke', '#4872f9'); line.setAttribute('stroke-width', '3');
+    line.setAttribute('pointer-events', 'none');
+    g.appendChild(line);
+    // Left arrow
+    var arL = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    arL.setAttribute('points', '0,' + y + ' 6,' + (y - 4) + ' 6,' + (y + 4));
+    arL.setAttribute('fill', '#4872f9');
+    g.appendChild(arL);
+    // Right arrow
+    var arR = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    arR.setAttribute('points', svgW + ',' + y + ' ' + (svgW - 6) + ',' + (y - 4) + ' ' + (svgW - 6) + ',' + (y + 4));
+    arR.setAttribute('fill', '#4872f9');
+    g.appendChild(arR);
+    svgEl.appendChild(g);
+  }
+
+  function removeSvgIndicator() {
+    var svgEl = rpBars.querySelector('svg');
+    if (!svgEl) return;
+    var old = svgEl.querySelector('#drag-indicator');
+    if (old) old.remove();
+  }
+
+  // Dim the source row in the SVG
+  function dimSourceRow(name, dim) {
+    var svgEl = rpBars.querySelector('svg');
+    if (!svgEl) return;
+    // Find all groups with data-drag-handle or data-outcome matching name
+    var handles = svgEl.querySelectorAll('[data-drag-handle="' + name + '"]');
+    var outcomes = svgEl.querySelectorAll('[data-outcome="' + name + '"]');
+    var opacity = dim ? '0.25' : '1';
+    handles.forEach(function(el) { el.setAttribute('opacity', opacity); });
+    outcomes.forEach(function(el) { el.setAttribute('opacity', opacity); });
+  }
+
+  // Create a floating ghost showing the row label
+  function createGhost(name, x, y) {
+    if (ghostEl) ghostEl.remove();
+    ghostEl = document.createElement('div');
+    ghostEl.style.cssText =
+      'position:fixed;pointer-events:none;z-index:10001;' +
+      'background:rgba(255,255,255,0.95);border:1.5px solid #4872f9;' +
+      'border-radius:4px;padding:3px 10px;font-size:11px;color:#333;' +
+      'font-family:-apple-system,BlinkMacSystemFont,sans-serif;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,0.12);white-space:nowrap';
+    ghostEl.textContent = name;
+    document.body.appendChild(ghostEl);
+    moveGhost(x, y);
+  }
+
+  function moveGhost(x, y) {
+    if (!ghostEl) return;
+    ghostEl.style.left = (x + 16) + 'px';
+    ghostEl.style.top = (y - 12) + 'px';
+  }
+
+  function removeGhost() {
+    if (ghostEl) { ghostEl.remove(); ghostEl = null; }
+  }
+
   rpBars.addEventListener('pointerdown', function(e) {
     var name = findDragHandle(e.target);
     if (!name) return;
     e.preventDefault();
     dragName = name;
     dragOrigIdx = customMetricOrder.indexOf(name);
-    dragStartY = e.clientY;
+    lastTargetIdx = dragOrigIdx;
     rpBars.setPointerCapture(e.pointerId);
-
-    // Create drop indicator line
-    if (!dropIndicator) {
-      dropIndicator = document.createElement('div');
-      dropIndicator.style.cssText =
-        'position:absolute;left:0;right:0;height:2px;background:#4872f9;' +
-        'pointer-events:none;display:none;border-radius:1px;z-index:100';
-      rpBars.style.position = 'relative';
-      rpBars.appendChild(dropIndicator);
-    }
-    // Change cursor
     rpBars.style.cursor = 'grabbing';
+    dimSourceRow(name, true);
+    createGhost(name, e.clientX, e.clientY);
+    updateSvgIndicator(dragOrigIdx);
   });
 
   rpBars.addEventListener('pointermove', function(e) {
     if (!dragName) return;
-    var svgEl = rpBars.querySelector('svg');
-    if (!svgEl) return;
-    var svgRect = svgEl.getBoundingClientRect();
-    var localY = e.clientY - svgRect.top - topPad;
-    var targetIdx = Math.round(localY / rowH);
-    targetIdx = Math.max(0, Math.min(customMetricOrder.length, targetIdx));
-
-    // Show drop indicator
-    if (dropIndicator) {
-      var indicatorY = topPad + targetIdx * rowH;
-      dropIndicator.style.display = 'block';
-      dropIndicator.style.top = indicatorY + 'px';
+    var targetIdx = getTargetIdx(e);
+    if (targetIdx < 0) return;
+    moveGhost(e.clientX, e.clientY);
+    if (targetIdx !== lastTargetIdx) {
+      lastTargetIdx = targetIdx;
+      updateSvgIndicator(targetIdx);
     }
   });
 
   rpBars.addEventListener('pointerup', function(e) {
     if (!dragName) return;
-    var svgEl = rpBars.querySelector('svg');
     rpBars.style.cursor = '';
-    if (dropIndicator) dropIndicator.style.display = 'none';
+    removeSvgIndicator();
+    removeGhost();
 
-    if (svgEl) {
-      var svgRect = svgEl.getBoundingClientRect();
-      var localY = e.clientY - svgRect.top - topPad;
-      var targetIdx = Math.round(localY / rowH);
-      targetIdx = Math.max(0, Math.min(customMetricOrder.length - 1, targetIdx));
-
-      if (targetIdx !== dragOrigIdx) {
-        // Reorder: remove from old position, insert at new
-        customMetricOrder.splice(dragOrigIdx, 1);
-        customMetricOrder.splice(targetIdx, 0, dragName);
-        // Sync dropdowns
-        rebuildDropdownOrder();
-        // Re-render deltoid
-        showDeltoid(null);
-      }
+    var targetIdx = getTargetIdx(e);
+    if (targetIdx >= 0 && targetIdx !== dragOrigIdx) {
+      customMetricOrder.splice(dragOrigIdx, 1);
+      customMetricOrder.splice(targetIdx, 0, dragName);
+      rebuildDropdownOrder();
+      showDeltoid(null);
+    } else {
+      dimSourceRow(dragName, false);
     }
 
     dragName = null;
     dragOrigIdx = -1;
+    lastTargetIdx = -1;
   });
 })();
 
