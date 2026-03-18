@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, axHomeLink } from '../shared.js';
+import { libraryScript, vizScript, axHomeLink, axFavicon } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -7,6 +7,7 @@ return `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axjs — Preferential Bayesian Optimization</title>
+${axFavicon}
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {

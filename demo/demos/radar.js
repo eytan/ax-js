@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, axHomeLink } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, axHomeLink, axFavicon } from '../shared.js';
 
 function buildDefaultRadarFixture() {
   // VSIP test problem: 7 design variables, 3 objectives, 6 constraints
@@ -105,6 +105,7 @@ return `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axjs — Multi-Objective Radar</title>
+${axFavicon}
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {

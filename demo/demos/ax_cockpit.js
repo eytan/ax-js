@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, axHomeLink } from '../shared.js';
+import { libraryScript, vizScript, axHomeLink, axFavicon } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -7,6 +7,7 @@ return `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axjs — Ax Cockpit</title>
+${axFavicon}
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -21,7 +22,7 @@ h1 { font-size: 17px; font-weight: 500; color: #111; margin-bottom: 3px; }
 }
 label { font-size: 13px; color: #555; }
 select, button {
-  font-size: 13px; padding: 4px 9px; border-radius: 6px;
+  font-size: 11px; padding: 3px 8px; border-radius: 6px;
   border: 0.5px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; outline: none;
 }
 button:hover { background: #f0f0f0; }
@@ -442,17 +443,29 @@ function computePanelRange() {
 }
 computePanelRange();
 
-// ── Populate dropdowns ──
+// ── Populate dropdowns (sorted: objectives → constraints → tracking, alpha within) ──
 var selX = document.getElementById('selX');
 var selY = document.getElementById('selY');
 var selSQ = document.getElementById('selSQ');
 
+// Build sorted index order matching deltoid view
+var _objN = [], _conN = [], _trkN = [];
 outcomeNames.forEach(function(name, idx) {
-  selX.innerHTML += '<option value="' + idx + '">' + name + '</option>';
-  selY.innerHTML += '<option value="' + idx + '">' + name + '</option>';
+  if (objectiveSet[name]) _objN.push({ name: name, idx: idx });
+  else if (constraintMap[name]) _conN.push({ name: name, idx: idx });
+  else _trkN.push({ name: name, idx: idx });
 });
-selX.value = '0';
-selY.value = '1';
+_objN.sort(function(a,b){ return a.name.localeCompare(b.name); });
+_conN.sort(function(a,b){ return a.name.localeCompare(b.name); });
+_trkN.sort(function(a,b){ return a.name.localeCompare(b.name); });
+var sortedOutcomeOrder = _objN.concat(_conN).concat(_trkN);
+
+sortedOutcomeOrder.forEach(function(entry) {
+  selX.innerHTML += '<option value="' + entry.idx + '">' + entry.name + '</option>';
+  selY.innerHTML += '<option value="' + entry.idx + '">' + entry.name + '</option>';
+});
+selX.value = String(sortedOutcomeOrder[0].idx);
+selY.value = String(sortedOutcomeOrder.length > 1 ? sortedOutcomeOrder[1].idx : sortedOutcomeOrder[0].idx);
 
 function populateSQDropdown() {
   selSQ.innerHTML = '';

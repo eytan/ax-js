@@ -32,6 +32,9 @@ export function fixtureScript(varName, json) {
   return `<script>\nvar ${varName} = ${json};\n</script>`;
 }
 
-// Inline Ax logo SVG (white wireframe, links back to index)
-export const axIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="29" height="29" style="vertical-align:-4px;margin-right:8px;opacity:0.7"><path fill="#222" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg>`;
+// Inline Ax logo SVG (links back to index)
+export const axIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="24" height="24" style="vertical-align:middle;margin-right:8px;margin-top:-2px;opacity:0.7"><path fill="#222" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg>`;
 export const axHomeLink = `<a href="index.html" style="text-decoration:none">${axIconSvg}</a>`;
+
+// Inline SVG favicon (Ax logo as data URI)
+export const axFavicon = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 1200'%3E%3Cpath fill='%234872f9' d='M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z'/%3E%3C/svg%3E">`;

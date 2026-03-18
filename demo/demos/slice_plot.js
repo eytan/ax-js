@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, hartmannMixedFixture, axHomeLink } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, hartmannMixedFixture, axHomeLink, axFavicon } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -7,6 +7,7 @@ return `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axjs — Slice Plots</title>
+${axFavicon}
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
