@@ -1,9 +1,18 @@
 import type { RenderPredictor, ResponseSurfaceOptions, ParamSpec, DimensionRanker } from "../types";
 import { viridis, plasma } from "../colormaps";
-import { computeDimOrder } from "../params";
+import { isChoice, defaultParamValue, formatParamValue, computeDimOrder } from "../params";
 import { createOutcomeSelector, createParamSliders, createTooltipDiv, positionTooltip, removeTooltip, makeSelectEl } from "../widgets";
 import { buildPointTooltipHtml } from "../dots";
 import { injectScopedStyles } from "../styles";
+
+/** Extract ParamSpec array from predictor, falling back to range-only specs. */
+function getParamSpecs(predictor: RenderPredictor): ParamSpec[] {
+  if (predictor.paramSpecs) return predictor.paramSpecs;
+  return predictor.paramBounds.map(([lo, hi]) => ({
+    type: "range" as const,
+    bounds: [lo, hi] as [number, number],
+  }));
+}
 
 const CTRL_CSS = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
 
@@ -36,17 +45,14 @@ export function renderResponseSurface(
   container.innerHTML = "";
   injectScopedStyles(container);
   let selectedOutcome = options?.outcome ?? predictor.outcomeNames[0];
+  const params = getParamSpecs(predictor);
   const initOrder = computeDimOrder(predictor as DimensionRanker, predictor.paramNames.length, selectedOutcome);
-  let selDimX = options?.dimX ?? initOrder[0];
-  let selDimY = options?.dimY ?? (initOrder.length > 1 ? initOrder[1] : 0);
-  const bounds = predictor.paramBounds;
+  const rangeDims = initOrder.filter(d => !isChoice(params[d]));
+  let selDimX = options?.dimX ?? rangeDims[0] ?? 0;
+  let selDimY = options?.dimY ?? (rangeDims.length > 1 ? rangeDims[1] : 0);
   const fixedValues: (number | string | boolean)[] =
     options?.fixedValues?.slice() ??
-    bounds.map(([lo, hi]) => (lo + hi) / 2);
-  const params: ParamSpec[] = bounds.map(([lo, hi]) => ({
-    type: "range" as const,
-    bounds: [lo, hi] as [number, number],
-  }));
+    params.map((p) => defaultParamValue(p));
   const tooltip = createTooltipDiv(container.id);
 
   // Layout: outcome selector on top, then plots, then axis selectors + sliders below
@@ -91,12 +97,12 @@ export function renderResponseSurface(
   }
   selXEl = makeDimSelect("X axis:", selDimX, (v) => {
     selDimX = v;
-    if (selDimX === selDimY) { selDimY = (selDimX + 1) % predictor.paramNames.length; selYEl.value = String(selDimY); }
+    if (selDimX === selDimY) { selDimY = (selDimX + 1) % params.length; selYEl.value = String(selDimY); }
     rebuildSliders();
   });
   selYEl = makeDimSelect("Y axis:", selDimY, (v) => {
     selDimY = v;
-    if (selDimX === selDimY) { selDimX = (selDimY + 1) % predictor.paramNames.length; selXEl.value = String(selDimX); }
+    if (selDimX === selDimY) { selDimX = (selDimY + 1) % params.length; selXEl.value = String(selDimX); }
     rebuildSliders();
   });
 
@@ -155,20 +161,30 @@ function drawAxes(
   ML: number, MT: number, N: number,
   xlo: number, xhi: number, ylo: number, yhi: number,
   xName: string, yName: string, showYAxis: boolean,
+  xLabels?: string[], yLabels?: string[],
 ) {
   ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.strokeStyle = "rgba(0,0,0,0.15)";
   ctx.lineWidth = 1;
-  const nTicks = 4;
 
   // X-axis ticks
   ctx.textAlign = "center";
-  for (let ti = 0; ti <= nTicks; ti++) {
-    const v = xlo + ((xhi - xlo) * ti) / nTicks;
-    const tx = ML + (ti * N) / nTicks;
-    ctx.beginPath(); ctx.moveTo(tx, MT + N); ctx.lineTo(tx, MT + N + 4); ctx.stroke();
-    ctx.fillText(v.toFixed(2), tx, MT + N + 15);
+  if (xLabels) {
+    // Categorical: centered labels per category
+    for (let ci = 0; ci < xLabels.length; ci++) {
+      const tx = ML + (ci + 0.5) / xLabels.length * N;
+      ctx.beginPath(); ctx.moveTo(tx, MT + N); ctx.lineTo(tx, MT + N + 4); ctx.stroke();
+      ctx.fillText(xLabels[ci], tx, MT + N + 15);
+    }
+  } else {
+    const nTicks = 4;
+    for (let ti = 0; ti <= nTicks; ti++) {
+      const v = xlo + ((xhi - xlo) * ti) / nTicks;
+      const tx = ML + (ti * N) / nTicks;
+      ctx.beginPath(); ctx.moveTo(tx, MT + N); ctx.lineTo(tx, MT + N + 4); ctx.stroke();
+      ctx.fillText(v.toFixed(2), tx, MT + N + 15);
+    }
   }
   ctx.fillStyle = "rgba(0,0,0,0.6)";
   ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
@@ -180,11 +196,21 @@ function drawAxes(
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
   ctx.textAlign = "right";
-  for (let ti = 0; ti <= nTicks; ti++) {
-    const v = ylo + ((yhi - ylo) * ti) / nTicks;
-    const ty = MT + ((1 - ti / nTicks) * N);
-    ctx.beginPath(); ctx.moveTo(ML - 4, ty); ctx.lineTo(ML, ty); ctx.stroke();
-    ctx.fillText(v.toFixed(2), ML - 6, ty + 3);
+  if (yLabels) {
+    // Categorical: centered labels per category (yVals is already reversed for canvas)
+    for (let ci = 0; ci < yLabels.length; ci++) {
+      const ty = MT + (ci + 0.5) / yLabels.length * N;
+      ctx.beginPath(); ctx.moveTo(ML - 4, ty); ctx.lineTo(ML, ty); ctx.stroke();
+      ctx.fillText(yLabels[ci], ML - 6, ty + 3);
+    }
+  } else {
+    const nTicks = 4;
+    for (let ti = 0; ti <= nTicks; ti++) {
+      const v = ylo + ((yhi - ylo) * ti) / nTicks;
+      const ty = MT + ((1 - ti / nTicks) * N);
+      ctx.beginPath(); ctx.moveTo(ML - 4, ty); ctx.lineTo(ML, ty); ctx.stroke();
+      ctx.fillText(v.toFixed(2), ML - 6, ty + 3);
+    }
   }
   ctx.save();
   ctx.translate(12, MT + N / 2);
@@ -239,10 +265,11 @@ function renderResponseSurfaceStatic(
   const gridSize = options?.gridSize ?? 80;
   const bounds = predictor.paramBounds;
   const names = predictor.paramNames;
+  const params = getParamSpecs(predictor);
   const fixedValues =
     fixedValuesOverride?.slice() ??
     options?.fixedValues?.slice() ??
-    bounds.map(([lo, hi]) => (lo + hi) / 2);
+    params.map((p) => defaultParamValue(p));
 
   const ML = 48;
   const MT = 18;      // room for panel title
@@ -263,16 +290,26 @@ function renderResponseSurfaceStatic(
 
   const [xlo, xhi] = bounds[dimX];
   const [ylo, yhi] = bounds[dimY];
+  const xIsChoice = isChoice(params[dimX]);
+  const yIsChoice = isChoice(params[dimY]);
+
+  // Build axis value arrays — categorical uses discrete values, range uses continuous sweep
+  const xVals: number[] = xIsChoice
+    ? params[dimX].values!.map(Number)
+    : Array.from({ length: gridSize }, (_, i) => xlo + ((xhi - xlo) * i) / (gridSize - 1));
+  const yVals: number[] = yIsChoice
+    ? params[dimY].values!.map(Number).reverse()  // top = last, bottom = first (reversed for canvas)
+    : Array.from({ length: gridSize }, (_, j) => yhi - ((yhi - ylo) * j) / (gridSize - 1));
+  const nColsX = xVals.length;
+  const nColsY = yVals.length;
 
   // Build grid points (shared for both panels)
   const testPoints: number[][] = [];
-  for (let gj = 0; gj < gridSize; gj++) {
-    for (let gi = 0; gi < gridSize; gi++) {
-      const xv = xlo + ((xhi - xlo) * gi) / (gridSize - 1);
-      const yv = yhi - ((yhi - ylo) * gj) / (gridSize - 1);
-      const pt = fixedValues.slice();
-      pt[dimX] = xv;
-      pt[dimY] = yv;
+  for (let gj = 0; gj < nColsY; gj++) {
+    for (let gi = 0; gi < nColsX; gi++) {
+      const pt = fixedValues.slice() as number[];
+      pt[dimX] = xVals[gi];
+      pt[dimY] = yVals[gj];
       testPoints.push(pt);
     }
   }
@@ -295,13 +332,28 @@ function renderResponseSurfaceStatic(
   const xRange = xhi - xlo || 1;
   const yRange = yhi - ylo || 1;
   // Normalized positions (0-1) — actual px computed per panel
-  interface DotData { normX: number; normY: number; idx: number; pt: number[]; alpha: number }
+  // Categorical axes use index-based centering: (idx + 0.5) / nCols
+  function normX(val: number): number {
+    if (xIsChoice) {
+      const idx = xVals.indexOf(val);
+      return idx >= 0 ? (idx + 0.5) / nColsX : 0;
+    }
+    return (val - xlo) / xRange;
+  }
+  function normY(val: number): number {
+    if (yIsChoice) {
+      const idx = yVals.indexOf(val);
+      return idx >= 0 ? (idx + 0.5) / nColsY : 0;
+    }
+    return 1 - (val - ylo) / yRange;
+  }
+  interface DotData { normXv: number; normYv: number; idx: number; pt: number[]; alpha: number }
   const dotData: DotData[] = [];
   if (td.X.length > 0) {
     for (let i = 0; i < td.X.length; i++) {
       dotData.push({
-        normX: (td.X[i][dimX] - xlo) / xRange,
-        normY: 1 - (td.X[i][dimY] - ylo) / yRange,
+        normXv: normX(td.X[i][dimX]),
+        normYv: normY(td.X[i][dimY]),
         idx: i, pt: td.X[i], alpha: 0.85,
       });
     }
@@ -316,11 +368,11 @@ function renderResponseSurfaceStatic(
   function buildHeatmap(values: number[], vMin: number, vMax: number, colorFn: ColorFn): ImageData {
     const img = new ImageData(N, N);
     const range = vMax - vMin || 1;
-    const cellW = N / gridSize;
-    const cellH = N / gridSize;
+    const cellW = N / nColsX;
+    const cellH = N / nColsY;
     for (let k = 0; k < values.length; k++) {
-      const gi = k % gridSize;
-      const gj = Math.floor(k / gridSize);
+      const gi = k % nColsX;
+      const gj = Math.floor(k / nColsX);
       const t = Math.max(0, Math.min(1, (values[k] - vMin) / range));
       const rgb = colorFn(t);
       const x0 = Math.round(gi * cellW);
@@ -381,7 +433,10 @@ function renderResponseSurfaceStatic(
     drawVerticalColorbar(ctx, pML + N + CB_GAP, MT, CB_W, N, panel.vMin, panel.vMax, panel.colorFn);
 
     // Axes (Y-axis only on first panel)
-    drawAxes(ctx, pML, MT, N, xlo, xhi, ylo, yhi, names[dimX], names[dimY], isFirst);
+    const xLabels = xIsChoice ? params[dimX].values!.map(String) : undefined;
+    // yVals is reversed for canvas, so labels match that order
+    const yLabels = yIsChoice ? params[dimY].values!.map(String).reverse() : undefined;
+    drawAxes(ctx, pML, MT, N, xlo, xhi, ylo, yhi, names[dimX], names[dimY], isFirst, xLabels, yLabels);
 
     canvasRefs.push({ canvas, ctx, img: panel.img, ml: pML });
 
@@ -396,8 +451,8 @@ function renderResponseSurfaceStatic(
       ref.ctx.putImageData(ref.img, ref.ml, MT);
       // Compute per-panel dot positions
       const panelDots: CanvasDot[] = dotData.map((d) => ({
-        px: ref.ml + d.normX * N,
-        py: MT + d.normY * N,
+        px: ref.ml + d.normXv * N,
+        py: MT + d.normYv * N,
         idx: d.idx, pt: d.pt, alpha: d.alpha,
       }));
       drawDots(ref.ctx, panelDots, _getPinned());
@@ -441,8 +496,8 @@ function renderResponseSurfaceStatic(
       function findHit(mx: number, my: number): number {
         let best = -1, bestD = 144;
         for (let i = 0; i < dotData.length; i++) {
-          const dpx = rml + dotData[i].normX * N;
-          const dpy = MT + dotData[i].normY * N;
+          const dpx = rml + dotData[i].normXv * N;
+          const dpy = MT + dotData[i].normYv * N;
           const dx = mx - dpx, dy = my - dpy;
           const d2 = dx * dx + dy * dy;
           if (d2 < bestD) { bestD = d2; best = i; }
@@ -479,16 +534,16 @@ function renderResponseSurfaceStatic(
             hoverHighlight = false;
           }
           // Grid tooltip
-          const xVal = xlo + ((mx - rml) / N) * (xhi - xlo);
-          const yVal = yhi - ((my - MT) / N) * (yhi - ylo);
-          const gi = Math.round(((mx - rml) / N) * (gridSize - 1));
-          const gj = Math.round(((my - MT) / N) * (gridSize - 1));
-          const idx = Math.max(0, Math.min(gridSize - 1, gj)) * gridSize + Math.max(0, Math.min(gridSize - 1, gi));
+          const gi = Math.max(0, Math.min(nColsX - 1, Math.round(((mx - rml) / N) * (nColsX - 1))));
+          const gj = Math.max(0, Math.min(nColsY - 1, Math.round(((my - MT) / N) * (nColsY - 1))));
+          const xVal = xVals[gi];
+          const yVal = yVals[gj];
+          const idx = gj * nColsX + gi;
           const mu = means[idx] ?? 0;
           const s = stds[idx] ?? 0;
           tooltip.innerHTML =
-            `<b>${names[dimX]}</b>: ${xVal.toFixed(4)}<br>` +
-            `<b>${names[dimY]}</b>: ${yVal.toFixed(4)}<br>` +
+            `<b>${names[dimX]}</b>: ${formatParamValue(xVal, params[dimX])}<br>` +
+            `<b>${names[dimY]}</b>: ${formatParamValue(yVal, params[dimY])}<br>` +
             `\u03BC = ${mu.toFixed(4)}<br>\u03C3 = ${s.toFixed(4)}`;
           tooltip.style.display = "block";
           positionTooltip(tooltip, e.clientX, e.clientY);

@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, branincurrinFixture, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, hartmannMixedFixture, axHomeLink, axFavicon } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -29,7 +29,7 @@ ${axFavicon}
 <div id="plotContainer"></div>
 ${libraryScript()}
 ${vizScript()}
-${fixtureScript('__DEFAULT_FIXTURE__', branincurrinFixture)}
+${fixtureScript('__DEFAULT_FIXTURE__', hartmannMixedFixture)}
 <script>
 var Predictor = Ax.Predictor;
 var predictor, fixture;
