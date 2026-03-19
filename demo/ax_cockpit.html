@@ -108,6 +108,32 @@ button:hover { background: #f0f0f0; }
   width: 12px; height: 12px; border-radius: 0; background: none;
   position: relative;
 }
+.rp-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+}
+.rp-header .rp-title { margin-bottom: 0; }
+.rp-actions { display: flex; gap: 2px; margin-left: auto; }
+.scatter-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+.scatter-header .scatter-label {
+  font-size: 11px; color: #999; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.scatter-header .rp-actions { margin-left: auto; }
+.icon-btn {
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border: none; background: none; color: #999; cursor: pointer; border-radius: 4px;
+  padding: 0; font-size: 14px;
+}
+.icon-btn:hover { background: #f0f0f0; color: #555; }
+.icon-btn svg { width: 14px; height: 14px; pointer-events: none; }
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: #333; color: #fff; padding: 8px 18px; border-radius: 6px;
+  font-size: 12px; opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  z-index: 10000;
+}
+.toast.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -117,11 +143,23 @@ button:hover { background: #f0f0f0; }
 
 <div class="main-area">
   <div class="right-panel" id="rightPanel">
-    <div class="rp-title" id="rpTitle">Click an arm to see all outcomes</div>
+    <div class="rp-header">
+      <div class="rp-title" id="rpTitle">Click an arm to see all outcomes</div>
+      <div class="rp-actions">
+        <button class="icon-btn" id="btnCopyDeltoid" data-tip="Copy as text"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+        <button class="icon-btn" id="btnSaveDeltoid" data-tip="Download image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+      </div>
+    </div>
     <div id="rpBars"></div>
     <div id="rpSliders"></div>
   </div>
   <div class="scatter-wrap">
+    <div class="scatter-header">
+      <span class="scatter-label">Scatter</span>
+      <div class="rp-actions">
+        <button class="icon-btn" id="btnSaveScatter" data-tip="Download image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+      </div>
+    </div>
     <svg id="scatterSvg" width="420" height="400"></svg>
     <div class="legend" id="legend"></div>
     <div class="scatter-controls">
@@ -147,6 +185,7 @@ button:hover { background: #f0f0f0; }
     </div>
   </div>
 </div>
+<div class="toast" id="toast"></div>
 
 <script>
 "use strict";
@@ -9053,35 +9092,35 @@ function rebuildDropdownOrder() {
 // ── Drag reordering state ──
 var dragState = null; // { name, startY, rowH, origIdx }
 
-// Deltoid tooltip: custom div for data-tip hover
-var deltoidTip = document.createElement('div');
-deltoidTip.style.cssText =
+// Shared tooltip: custom div for data-tip hover
+var tooltip = document.createElement('div');
+tooltip.style.cssText =
   'position:fixed;display:none;background:rgba(255,255,255,0.97);border:1px solid #d0d0d0;' +
   'border-radius:5px;padding:5px 10px;font-size:11px;color:#333;pointer-events:none;' +
   'z-index:10000;white-space:pre-line;box-shadow:0 2px 8px rgba(0,0,0,0.1);max-width:300px';
-document.body.appendChild(deltoidTip);
+document.body.appendChild(tooltip);
 
 rpBars.addEventListener('mouseover', function(e) {
   var el = e.target;
   while (el && el !== rpBars) {
     var tip = el.getAttribute && el.getAttribute('data-tip');
     if (tip) {
-      deltoidTip.textContent = tip;
-      deltoidTip.style.display = 'block';
+      tooltip.textContent = tip;
+      tooltip.style.display = 'block';
       return;
     }
     el = el.parentNode;
   }
-  deltoidTip.style.display = 'none';
+  tooltip.style.display = 'none';
 });
 rpBars.addEventListener('mousemove', function(e) {
-  if (deltoidTip.style.display === 'block') {
-    deltoidTip.style.left = (e.clientX + 14) + 'px';
-    deltoidTip.style.top = (e.clientY - 8) + 'px';
+  if (tooltip.style.display === 'block') {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
   }
 });
 rpBars.addEventListener('mouseleave', function() {
-  deltoidTip.style.display = 'none';
+  tooltip.style.display = 'none';
 });
 
 // Tooltip for Sobol' importance bars in the slider panel
@@ -9090,22 +9129,39 @@ rpSliders.addEventListener('mouseover', function(e) {
   while (el && el !== rpSliders) {
     var tip = el.getAttribute && el.getAttribute('data-tip');
     if (tip) {
-      deltoidTip.textContent = tip;
-      deltoidTip.style.display = 'block';
+      tooltip.textContent = tip;
+      tooltip.style.display = 'block';
       return;
     }
     el = el.parentNode;
   }
-  deltoidTip.style.display = 'none';
+  tooltip.style.display = 'none';
 });
 rpSliders.addEventListener('mousemove', function(e) {
-  if (deltoidTip.style.display === 'block') {
-    deltoidTip.style.left = (e.clientX + 14) + 'px';
-    deltoidTip.style.top = (e.clientY - 8) + 'px';
+  if (tooltip.style.display === 'block') {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
   }
 });
 rpSliders.addEventListener('mouseleave', function() {
-  deltoidTip.style.display = 'none';
+  tooltip.style.display = 'none';
+});
+
+// Tooltip for icon buttons (reuses tooltip)
+document.querySelectorAll('.icon-btn[data-tip]').forEach(function(btn) {
+  btn.addEventListener('mouseenter', function(e) {
+    tooltip.textContent = btn.getAttribute('data-tip');
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
+  });
+  btn.addEventListener('mousemove', function(e) {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
+  });
+  btn.addEventListener('mouseleave', function() {
+    tooltip.style.display = 'none';
+  });
 });
 
 var W = 420, H = 400;
@@ -10374,6 +10430,110 @@ function updateSubtitle() {
   if (nCon > 0) parts.push(nCon + ' constraint' + (nCon > 1 ? 's' : ''));
   document.getElementById('subtitle').textContent = parts.join(' \u00B7 ');
 }
+
+// ── Toast ──
+var toastEl = document.getElementById('toast');
+var toastTimer = null;
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { toastEl.classList.remove('show'); }, 2000);
+}
+
+// ── Copy deltoid summary as text ──
+function buildSummaryText() {
+  var displayItem = getDisplayItem();
+  if (!displayItem) return null;
+  var itemRelData = getItemRelData(displayItem);
+  if (!itemRelData) return null;
+
+  var label = getItemLabel(displayItem);
+  var lines = [label + ' \u2014 % vs Control', ''];
+  var groups = { Objectives: [], Constraints: [], Tracking: [] };
+  customMetricOrder.forEach(function(name) {
+    var r = itemRelData[name];
+    var txt = name + ' ';
+    if (r) {
+      var sign = r.mean >= 0 ? '+' : '';
+      txt += sign + r.mean.toFixed(2) + '% \u00B1 ' + (r.sem * CI_Z.c95).toFixed(2) + '%';
+    } else {
+      txt += 'n/a';
+    }
+    if (objectiveSet[name]) groups.Objectives.push(txt);
+    else if (constraintMap[name]) groups.Constraints.push(txt);
+    else groups.Tracking.push(txt);
+  });
+  ['Objectives', 'Constraints', 'Tracking'].forEach(function(g) {
+    if (groups[g].length === 0) return;
+    lines.push('*' + g + '*');
+    groups[g].forEach(function(l) { lines.push(l); });
+    lines.push('');
+  });
+  return lines.join('\n').trim();
+}
+
+function copyDeltoidText() {
+  var text = buildSummaryText();
+  if (!text) { showToast('No arm selected'); return; }
+  navigator.clipboard.writeText(text).then(function() {
+    showToast('Copied to clipboard');
+  }, function() {
+    showToast('Copy failed (requires HTTPS)');
+  });
+}
+
+// ── Save SVG as PNG ──
+function saveSvgAsPng(svgEl, filename) {
+  if (!svgEl) { showToast('No chart to save'); return; }
+  var clone = svgEl.cloneNode(true);
+  // Ensure width/height attributes for rasterization
+  var w = svgEl.getAttribute('width') || svgEl.getBoundingClientRect().width;
+  var h = svgEl.getAttribute('height') || svgEl.getBoundingClientRect().height;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  var xml = new XMLSerializer().serializeToString(clone);
+  var dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+  var img = new Image();
+  img.onload = function() {
+    var scale = 2; // retina
+    var canvas = document.createElement('canvas');
+    canvas.width = w * scale;
+    canvas.height = h * scale;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0, +w, +h);
+    canvas.toBlob(function(blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('Saved ' + filename);
+    }, 'image/png');
+  };
+  img.src = dataUrl;
+}
+
+function saveDeltoidPng() {
+  var svgEl = rpBars.querySelector('svg');
+  if (!svgEl) { showToast('No arm selected'); return; }
+  var displayItem = getDisplayItem();
+  var name = displayItem ? (displayItem.type === 'candidate' ? candidates[displayItem.idx].armName : arms[displayItem.idx].armName) : 'deltoid';
+  saveSvgAsPng(svgEl, 'deltoid_' + name.replace(/[^a-zA-Z0-9_]/g, '_') + '.png');
+}
+
+function saveScatterPng() {
+  saveSvgAsPng(document.getElementById('scatterSvg'), 'scatter.png');
+}
+
+document.getElementById('btnCopyDeltoid').addEventListener('click', copyDeltoidText);
+document.getElementById('btnSaveDeltoid').addEventListener('click', saveDeltoidPng);
+document.getElementById('btnSaveScatter').addEventListener('click', saveScatterPng);
 
 // ── Init ──
 updateSubtitle();
