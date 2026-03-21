@@ -5,78 +5,54 @@ Cross-references: `plans/codebase-observations.md`, `plans/upstream-proposals.md
 
 ---
 
-## Tier 1: High Impact, Low Risk
+## Tier 1: High Impact, Low Risk — ✅ COMPLETE
 
-These are independent changes that can each be done in a single PR with no
-upstream coordination.
+### 1.1 ✅ Cache LU factorization in PairwiseGP
 
-### 1.1 Cache LU factorization in PairwiseGP
+Cached LU factors (P, L, U) at construction time. Added `solveLUWithFactors()`
+to `src/linalg/lu.ts`. Predict calls drop from O(n³) to O(n²).
 
-Cache the LU factors (P, L, U) of the CKI matrix at construction time. Currently
-`solveLU(CKI, ...)` recomputes the factorization on every `predict()` and
-`predictCovarianceWith()` call, adding an unnecessary O(n^3) cost per prediction.
+### 1.2 ✅ Share V matrix between predict and predictCovarianceWith
 
-**Files:** `src/models/pairwise_gp.ts`, `src/linalg/lu.ts`
-**Test:** Parity fixtures `branin_pairwise.json`, `pairwise_warp.json` must still pass.
+Added V matrix cache in `ExactGP`. When `predictCovarianceWith` is called with
+the same test points as `predict`, V is reused (~50% savings on relativization).
 
-### 1.2 Share V matrix between predict and predictCovarianceWith
+### 1.3 ✅ Add computeDiag to all kernels
 
-When relativization workflows call both methods with the same test points, V is
-computed twice. Add an optional cache or combined method.
+All 9 kernel types already had `computeDiag` implemented. Added 6-test
+verification suite (`test/kernels/computeDiag.test.ts`) confirming diagonal
+matches full matrix to 1e-12.
 
-**Files:** `src/models/gp.ts`
-**Test:** Verify identical numerical results with and without caching.
+### 1.4 ✅ Reduce `any` usage
 
-### 1.3 Add computeDiag to all kernels
-
-Add a `computeDiag(X)` method to the kernel interface that returns only the
-diagonal of `K(X, X)`. This is the prerequisite for diagonal-only Kss (Tier 2).
-
-**Files:** `src/kernels/types.ts`, `src/kernels/rbf.ts`, `src/kernels/matern.ts`,
-`src/kernels/scale.ts`, `src/kernels/composite.ts`, `src/kernels/categorical.ts`,
-`src/kernels/multitask.ts`
-**Test:** For each kernel, verify `computeDiag(X) === diag(compute(X, X))`.
-
-### 1.4 Reduce `any` usage
-
-Replace remaining `any` casts with proper types. Most are in `src/predictor.ts`
-where heterogeneous model types are dispatched — use discriminated unions.
-Run `grep -r 'as any\|: any' src/` to find current occurrences.
+Eliminated all 9 `any` occurrences in src/ via discriminated unions. Added
+`SubModelState` type alias, proper type guards in Predictor.
 
 ---
 
-## Tier 2: Medium Impact, Independent
+## Tier 2: Medium Impact, Independent — ✅ COMPLETE
 
-### 2.1 Diagonal-only Kss path
+### 2.1 ✅ Diagonal-only Kss path
 
-Use `computeDiag` (from 1.3) in `gp.ts` prediction when only variance is needed
-(not full covariance). For an 80x80 grid this reduces Kss from 6400x6400
-(328 MB) to a 6400-element vector.
+Was already implemented via `kernelDiag()` in `gp.ts`. Confirmed working with
+all kernel types. For 80×80 grid: 328 MB → 51 KB.
 
-**Depends on:** Tier 1.3 (computeDiag on all kernels)
-**Files:** `src/models/gp.ts`
+### 2.2 ✅ Kernel caching for interactive use
 
-### 2.2 Kernel caching for interactive use
+Added K* (cross-covariance) cache in `ExactGP` with key based on dimensions +
+first/last values. Eliminates redundant kernel evaluations during slider-driven
+visualization. Tests in `test/models/gp_cache.test.ts`.
 
-Cache the cross-covariance K* and check if test points have changed before
-recomputing. Useful for slider-driven visualization where the same grid is
-reused across many parameter updates.
+### 2.3 ✅ forwardSolveTransposed
 
-**Files:** `src/models/gp.ts`
-**Risk:** Cache invalidation complexity. Consider a simple hash of test point
-coordinates.
+Added `forwardSolveTransposed(L, B)` to `src/linalg/solve.ts`. Solves
+`L X = Bᵀ` without allocating the transpose matrix. Saves O(nm) allocation
+per predict call (~781 KB for n=100, m=1000).
 
-### 2.3 forwardSolveTransposed
+### 2.4 ✅ ESLint configuration cleanup
 
-Eliminate the explicit transpose allocation in `gp.ts:predict()` by adding a
-`forwardSolveTransposed` that reads K* in column-major order.
-
-**Files:** `src/linalg/solve.ts`, `src/models/gp.ts`
-
-### 2.4 ESLint configuration cleanup
-
-The `eslint.config.mjs` and `tsconfig.eslint.json` files are untracked. Integrate
-them into the build or remove them. Incrementally enable stricter rules.
+Full ESLint 9 flat config + Prettier + unicorn. Copyright headers on all 92
+`.ts` files. Zero lint errors. `npm run lint` / `npm run format` scripts added.
 
 ---
 
@@ -151,17 +127,8 @@ and triangular solves.
 ## Sequencing
 
 ```
-Tier 1 (all independent, can parallelize):
-  1.1 LU caching
-  1.2 V matrix sharing
-  1.3 computeDiag on kernels
-  1.4 Reduce any count
-
-Tier 2 (after prerequisites):
-  2.1 Diagonal Kss  <-- depends on 1.3
-  2.2 Kernel caching (independent)
-  2.3 forwardSolveTransposed (independent)
-  2.4 ESLint cleanup (independent)
+Tier 1 — ✅ COMPLETE
+Tier 2 — ✅ COMPLETE
 
 Tier 3 (blocked on upstream):
   3.1 Stabilize private attrs  <-- file issues first
@@ -176,6 +143,5 @@ Tier 4 (needs RFCs):
   4.4 WebGPU
 ```
 
-Tier 1 items are the immediate focus. Tier 2.1 is the highest-impact item that
-has a dependency. Tier 3 should be initiated in parallel via upstream issues.
-Tier 4 items are tracked but not scheduled.
+Tier 3 should be initiated via upstream issues. Tier 4 items are tracked but
+not scheduled.
