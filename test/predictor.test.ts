@@ -15,7 +15,7 @@ function loadFixture(name: string): any {
   return JSON.parse(readFileSync(join(fixturesDir, name), "utf8"));
 }
 
-const TOLERANCE = 1e-6;
+const TOLERANCE = 1e-8;
 
 describe("Predictor", () => {
   describe("single-output model (branin)", () => {

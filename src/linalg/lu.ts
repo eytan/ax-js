@@ -65,13 +65,21 @@ export function lu(A: Matrix): { L: Matrix; U: Matrix; perm: Array<number> } {
 }
 
 /**
- * Solve Ax = b using LU decomposition with partial pivoting.
- * Handles non-symmetric matrices (unlike Cholesky).
+ * LU factorization result (for caching).
  */
-export function solveLU(A: Matrix, b: Matrix): Matrix {
-  const n = A.rows;
-  const { L, U, perm } = lu(A);
+export interface LUFactors {
+  L: Matrix;
+  U: Matrix;
+  perm: Array<number>;
+}
 
+/**
+ * Solve Ax = b using pre-computed LU factors.
+ * Used when the same matrix A is solved against multiple right-hand sides.
+ */
+export function solveLUWithFactors(factors: LUFactors, b: Matrix): Matrix {
+  const { L, U, perm } = factors;
+  const n = L.rows;
   const x = Matrix.zeros(n, b.cols);
 
   for (let col = 0; col < b.cols; col++) {
@@ -107,4 +115,13 @@ export function solveLU(A: Matrix, b: Matrix): Matrix {
   }
 
   return x;
+}
+
+/**
+ * Solve Ax = b using LU decomposition with partial pivoting.
+ * Handles non-symmetric matrices (unlike Cholesky).
+ */
+export function solveLU(A: Matrix, b: Matrix): Matrix {
+  const factors = lu(A);
+  return solveLUWithFactors(factors, b);
 }

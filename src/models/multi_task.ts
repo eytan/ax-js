@@ -299,12 +299,9 @@ export class MultiTaskGP {
 
     // Scale by outcome transform if Standardize (linear)
     if (this.outcomeTransform) {
-      const tf = this.outcomeTransform as any;
-      if (typeof tf.std === "number") {
-        const s2 = tf.std * tf.std;
-        for (let i = 0; i < n; i++) {
-          covariance[i] *= s2;
-        }
+      // StandardizeUntransform has a std property; use untransformCovariance for proper scaling
+      for (let i = 0; i < n; i++) {
+        covariance[i] = this.outcomeTransform.untransformCovariance(covariance[i]);
       }
     }
 

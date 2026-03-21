@@ -1,6 +1,7 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
 
 import type { ParamSpec, DimensionRanker, RenderPredictor } from "./types";
+import type { ExperimentState, FixtureData } from "../models/types.js";
 
 import { Rng } from "../acquisition/sample_mvn.js";
 
@@ -36,6 +37,24 @@ export function formatParamValue(val: number | string | boolean, p: ParamSpec): 
   return (val as number).toFixed(3);
 }
 
+/** Normalized fixture format for visualization (flattened from FixtureData). */
+interface NormalizedFixture {
+  search_space: ExperimentState["search_space"];
+  model_state: ExperimentState["model_state"];
+  metadata: {
+    name: string;
+    description: string;
+    [key: string]: unknown;
+  };
+  test_points: Array<Array<number>>;
+  outcome_names?: Array<string>;
+  optimization_config?: ExperimentState["optimization_config"];
+  status_quo?: ExperimentState["status_quo"];
+  adapter_transforms?: ExperimentState["adapter_transforms"];
+  observations?: ExperimentState["observations"];
+  candidates?: ExperimentState["candidates"];
+}
+
 /**
  * Normalize a fixture or ExperimentState into a flat shape for visualization.
  *
@@ -43,39 +62,44 @@ export function formatParamValue(val: number | string | boolean, p: ParamSpec): 
  * ExperimentState objects, extracting search_space, model_state,
  * metadata, and optional fields into a consistent shape.
  */
-export function normalizeFixture(data: any): any {
-  if (data.experiment) {
-    const result: any = {
-      search_space: data.experiment.search_space,
-      model_state: data.experiment.model_state,
+export function normalizeFixture(
+  data: FixtureData | ExperimentState,
+): NormalizedFixture | ExperimentState {
+  // Type guard: if it has an 'experiment' field, it's a FixtureData
+  if ("experiment" in data && data.experiment) {
+    const fixtureData = data;
+    const result: NormalizedFixture = {
+      search_space: fixtureData.experiment.search_space,
+      model_state: fixtureData.experiment.model_state,
       metadata: {
-        name: data.experiment.name || "",
-        description: data.experiment.description || "",
-        ...data.test?.metadata,
+        name: fixtureData.experiment.name || "",
+        description: fixtureData.experiment.description || "",
+        ...fixtureData.test?.metadata,
       },
-      test_points: data.test?.test_points || [],
+      test_points: fixtureData.test?.test_points || [],
     };
-    if (data.experiment.outcome_names) {
-      result.outcome_names = data.experiment.outcome_names;
+    if (fixtureData.experiment.outcome_names) {
+      result.outcome_names = fixtureData.experiment.outcome_names;
     }
-    if (data.experiment.optimization_config) {
-      result.optimization_config = data.experiment.optimization_config;
+    if (fixtureData.experiment.optimization_config) {
+      result.optimization_config = fixtureData.experiment.optimization_config;
     }
-    if (data.experiment.status_quo) {
-      result.status_quo = data.experiment.status_quo;
+    if (fixtureData.experiment.status_quo) {
+      result.status_quo = fixtureData.experiment.status_quo;
     }
-    if (data.experiment.adapter_transforms) {
-      result.adapter_transforms = data.experiment.adapter_transforms;
+    if (fixtureData.experiment.adapter_transforms) {
+      result.adapter_transforms = fixtureData.experiment.adapter_transforms;
     }
-    if (data.experiment.observations) {
-      result.observations = data.experiment.observations;
+    if (fixtureData.experiment.observations) {
+      result.observations = fixtureData.experiment.observations;
     }
-    if (data.experiment.candidates) {
-      result.candidates = data.experiment.candidates;
+    if (fixtureData.experiment.candidates) {
+      result.candidates = fixtureData.experiment.candidates;
     }
     return result;
   }
-  return data;
+  // Already an ExperimentState
+  return data as ExperimentState;
 }
 
 /**

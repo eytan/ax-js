@@ -12,8 +12,8 @@ Prediction-only (no fitting). Hyperparameters are exported from Python via `axjs
 
 ## Testing Rules
 
-- **Tolerance ceiling**: Global tolerance of `1e-6`. All computations use Float64 (double precision).
-  Any diff > 1e-5 indicates a real numerical bug, not floating-point precision limits.
+- **Tolerance ceiling**: Global tolerance of `1e-8`. All computations use Float64 (double precision).
+  Any diff > 1e-7 indicates a real numerical bug, not floating-point precision limits.
 - **Minimum fixture count**: The parity test suite requires >= 28 parity fixtures. Empty or corrupt
   manifests cause hard failures, not silent skips. See `docs/testing.md` for full details.
 - **Fixture regeneration**: Run `python python/generate_fixtures.py` after any model/kernel changes.

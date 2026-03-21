@@ -6,7 +6,7 @@ import type { Kernel } from "../kernels/types.js";
 import { buildKernel } from "../kernels/build.js";
 import { kernelDiag } from "../kernels/composite.js";
 import { cholesky } from "../linalg/cholesky.js";
-import { solveLU } from "../linalg/lu.js";
+import { lu, solveLUWithFactors, type LUFactors } from "../linalg/lu.js";
 import { Matrix } from "../linalg/matrix.js";
 import { matmul, transpose } from "../linalg/ops.js";
 import { solveCholesky } from "../linalg/solve.js";
@@ -36,6 +36,7 @@ export class PairwiseGP {
   private readonly alpha: Matrix;
   private readonly likelihoodHess: Matrix;
   private readonly CKI: Matrix;
+  private readonly ckiLU: LUFactors;
 
   constructor(
     trainX: Matrix,
@@ -71,6 +72,9 @@ export class PairwiseGP {
     const CK = matmul(likelihoodHess, K);
     this.CKI = CK;
     this.CKI.addDiag(1);
+
+    // Cache LU factorization of CKI (CKI is NOT symmetric, so we need LU)
+    this.ckiLU = lu(this.CKI);
   }
 
   /** Transform inputs through normalize + warp pipeline. */
@@ -109,7 +113,7 @@ export class PairwiseGP {
     const KstarT = transpose(Kstar);
     const C_KstarT = matmul(this.likelihoodHess, KstarT);
     // CKI is NOT symmetric (C and K don't commute), so we need LU, not Cholesky
-    const fac = solveLU(this.CKI, C_KstarT);
+    const fac = solveLUWithFactors(this.ckiLU, C_KstarT);
     const correction = matmul(Kstar, fac);
 
     const variance = new Float64Array(testXNorm.rows);
@@ -138,7 +142,7 @@ export class PairwiseGP {
     // fac_ref = (CK+I)⁻¹ @ C @ K(X, ref)
     const KstarRefT = transpose(KstarRef);
     const C_KstarRefT = matmul(this.likelihoodHess, KstarRefT);
-    const facRef = solveLU(this.CKI, C_KstarRefT);
+    const facRef = solveLUWithFactors(this.ckiLU, C_KstarRefT);
 
     // Prior covariance k(test, ref)
     const Ktr = this.kernel.compute(testXNorm, refXNorm);

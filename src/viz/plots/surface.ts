@@ -155,7 +155,7 @@ export function renderResponseSurface(
 
   // Axis selectors (below plot, above sliders) with collision guard
 
-  const axisSelects: { x: HTMLSelectElement; y: HTMLSelectElement } = {} as any;
+  const axisSelects: { x?: HTMLSelectElement; y?: HTMLSelectElement } = {};
   function makeDimSelect(
     label: string,
     initial: number,
@@ -182,7 +182,7 @@ export function renderResponseSurface(
     selDimX = v;
     if (selDimX === selDimY) {
       selDimY = (selDimX + 1) % params.length;
-      axisSelects.y.value = String(selDimY);
+      axisSelects.y!.value = String(selDimY);
     }
     rebuildSliders();
   });
@@ -190,7 +190,7 @@ export function renderResponseSurface(
     selDimY = v;
     if (selDimX === selDimY) {
       selDimX = (selDimY + 1) % params.length;
-      axisSelects.x.value = String(selDimX);
+      axisSelects.x!.value = String(selDimX);
     }
     rebuildSliders();
   });

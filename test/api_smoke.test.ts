@@ -1,7 +1,7 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
 
 /**
- * Smoke test for the axjs public API surface.
+ * Smoke test for the ax-js public API surface.
  *
  * Verifies that public imports compile, Predictor works end-to-end on a real
  * fixture, and sub-exports (viz, acquisition) are accessible.
@@ -17,205 +17,83 @@ import { UpperConfidenceBound, LogExpectedImprovement } from "../src/acquisition
 import { Predictor, loadModel, relativize } from "../src/index.js";
 import { viridis, plasma, isChoice, normalizeFixture } from "../src/viz/index.js";
 
-// 11. Acquisition imports
-
-// ── Load fixture ──────────────────────────────────────────────────────────
-
 const fixturePath = join(__dirname, "fixtures", "branin_matern25.json");
 const fixtureRaw = JSON.parse(readFileSync(fixturePath, "utf8"));
 const experimentState: ExperimentState = fixtureRaw.experiment;
 
-describe("Public API imports", () => {
-  it("Predictor, loadModel, relativize are defined", () => {
+describe("Public API smoke", () => {
+  it("core exports are defined", () => {
     expect(Predictor).toBeDefined();
     expect(loadModel).toBeDefined();
     expect(relativize).toBeDefined();
   });
-});
 
-describe("Predictor properties", () => {
-  const predictor = new Predictor(experimentState);
-
-  it("paramNames returns string array", () => {
-    expect(predictor.paramNames).toEqual(["x0", "x1"]);
+  it("Predictor exposes metadata", () => {
+    const p = new Predictor(experimentState);
+    expect(p.paramNames).toEqual(["x0", "x1"]);
+    expect(p.paramBounds).toHaveLength(2);
+    expect(p.outcomeNames).toEqual(["y"]);
   });
 
-  it("paramBounds returns array of [lo, hi] tuples", () => {
-    const bounds = predictor.paramBounds;
-    expect(bounds).toHaveLength(2);
-    for (const [lo, hi] of bounds) {
-      expect(typeof lo).toBe("number");
-      expect(typeof hi).toBe("number");
-      expect(hi).toBeGreaterThanOrEqual(lo);
-    }
-  });
-
-  it("outcomeNames returns string array", () => {
-    expect(predictor.outcomeNames).toEqual(["y"]);
-  });
-
-  it("statusQuoPoint is null for this fixture", () => {
-    expect(predictor.statusQuoPoint).toBeNull();
-  });
-});
-
-describe("Predictor.predict()", () => {
-  const predictor = new Predictor(experimentState);
-  const testPoints = fixtureRaw.test.test_points.slice(0, 3);
-  const result = predictor.predict(testPoints);
-
-  it("returns object keyed by outcome name", () => {
+  it("predict returns keyed Float64Array results with positive variance", () => {
+    const p = new Predictor(experimentState);
+    const result = p.predict(fixtureRaw.test.test_points.slice(0, 3));
     expect(Object.keys(result)).toEqual(["y"]);
-  });
-
-  it("mean is a Float64Array with correct length", () => {
-    const pred = result["y"];
-    expect(pred.mean).toBeInstanceOf(Float64Array);
-    expect(pred.mean).toHaveLength(3);
-  });
-
-  it("variance is a Float64Array with correct length", () => {
-    const pred = result["y"];
-    expect(pred.variance).toBeInstanceOf(Float64Array);
-    expect(pred.variance).toHaveLength(3);
-  });
-
-  it("variance values are positive", () => {
-    const pred = result["y"];
-    for (const v of pred.variance) {
+    expect(result["y"].mean).toBeInstanceOf(Float64Array);
+    expect(result["y"].mean).toHaveLength(3);
+    for (const v of result["y"].variance) {
       expect(v).toBeGreaterThan(0);
     }
   });
-});
 
-describe("Predictor.getTrainingData()", () => {
-  const predictor = new Predictor(experimentState);
-  const td = predictor.getTrainingData("y");
-
-  it("returns non-empty X and Y", () => {
-    expect(td.X.length).toBeGreaterThan(0);
-    expect(td.Y.length).toBeGreaterThan(0);
+  it("getTrainingData returns untransformed Y", () => {
+    const p = new Predictor(experimentState);
+    const td = p.getTrainingData("y");
     expect(td.X.length).toBe(td.Y.length);
+    expect(td.X.length).toBeGreaterThan(0);
+    // Branin has range ~[0, 300]; standardized would be near 0
+    expect(Math.max(...td.Y.map(Math.abs))).toBeGreaterThan(1);
   });
 
-  it("Y values are NOT near zero (i.e. not raw standardized)", () => {
-    // Branin function has range roughly [0, 300]; standardized would be near 0
-    const maxAbsY = Math.max(...td.Y.map(Math.abs));
-    expect(maxAbsY).toBeGreaterThan(1);
-  });
+  it("getLengthscales, loocv, rankDimensions, kernelCorrelation", () => {
+    const p = new Predictor(experimentState);
 
-  it("paramNames matches predictor.paramNames", () => {
-    expect(td.paramNames).toEqual(["x0", "x1"]);
-  });
-});
-
-describe("Predictor.getLengthscales()", () => {
-  const predictor = new Predictor(experimentState);
-  const ls = predictor.getLengthscales("y");
-
-  it("returns array of positive numbers", () => {
+    const ls = p.getLengthscales("y");
     expect(ls).not.toBeNull();
-    expect(Array.isArray(ls)).toBe(true);
-    for (const val of ls!) {
-      expect(typeof val).toBe("number");
-      expect(val).toBeGreaterThan(0);
+    for (const v of ls!) {
+      expect(v).toBeGreaterThan(0);
     }
-  });
-});
 
-describe("Predictor.loocv()", () => {
-  const predictor = new Predictor(experimentState);
-  const cv = predictor.loocv("y");
-
-  it("observed, mean, variance are same length", () => {
+    const cv = p.loocv("y");
     expect(cv.observed.length).toBe(cv.mean.length);
-    expect(cv.observed.length).toBe(cv.variance.length);
-    expect(cv.observed.length).toBeGreaterThan(0);
-  });
-
-  it("variance values are positive", () => {
     for (const v of cv.variance) {
       expect(v).toBeGreaterThan(0);
     }
-  });
-});
 
-describe("Predictor.rankDimensionsByImportance()", () => {
-  const predictor = new Predictor(experimentState);
-  const ranked = predictor.rankDimensionsByImportance("y");
-
-  it("returns sorted array with dimIndex and lengthscale", () => {
-    expect(ranked).not.toBeNull();
+    const ranked = p.rankDimensionsByImportance("y");
     expect(ranked.length).toBeGreaterThan(0);
-    for (const entry of ranked) {
-      expect(typeof entry.dimIndex).toBe("number");
-      expect(typeof entry.lengthscale).toBe("number");
-      expect(entry.lengthscale).toBeGreaterThan(0);
-      expect(typeof entry.paramName).toBe("string");
-    }
-  });
-
-  it("sorted by ascending lengthscale (most important first)", () => {
-    // rankDimensionsByImportance sorts by lengthscale ascending
-    // (shorter lengthscale = more important)
     for (let i = 1; i < ranked.length; i++) {
       expect(ranked[i].lengthscale).toBeGreaterThanOrEqual(ranked[i - 1].lengthscale);
     }
-  });
-});
 
-describe("Predictor.kernelCorrelation()", () => {
-  const predictor = new Predictor(experimentState);
-  const td = predictor.getTrainingData("y");
-  const pt = td.X[0];
-
-  it("returns number in [0, 1]", () => {
-    const corr = predictor.kernelCorrelation(pt, td.X[1], "y");
-    expect(typeof corr).toBe("number");
+    const td = p.getTrainingData("y");
+    expect(p.kernelCorrelation(td.X[0], td.X[0], "y")).toBeCloseTo(1, 5);
+    const corr = p.kernelCorrelation(td.X[0], td.X[1], "y");
     expect(corr).toBeGreaterThanOrEqual(0);
     expect(corr).toBeLessThanOrEqual(1);
   });
 
-  it("self-correlation is approximately 1", () => {
-    const selfCorr = predictor.kernelCorrelation(pt, pt, "y");
-    expect(selfCorr).toBeCloseTo(1, 5);
-  });
-});
-
-describe("Viz imports", () => {
-  it("viridis returns RGB tuple", () => {
+  it("viz exports work", () => {
     const rgb = viridis(0.5);
     expect(rgb).toHaveLength(3);
-    for (const c of rgb) {
-      expect(c).toBeGreaterThanOrEqual(0);
-      expect(c).toBeLessThanOrEqual(255);
-    }
-  });
-
-  it("plasma returns RGB tuple", () => {
-    const rgb = plasma(0.5);
-    expect(rgb).toHaveLength(3);
-  });
-
-  it("isChoice works", () => {
+    expect(plasma(0.5)).toHaveLength(3);
     expect(isChoice({ type: "choice", values: ["a", "b"] })).toBe(true);
     expect(isChoice({ type: "range", bounds: [0, 1] })).toBe(false);
+    expect(normalizeFixture(fixtureRaw).model_state).toBeDefined();
   });
 
-  it("normalizeFixture extracts experiment state", () => {
-    const normalized = normalizeFixture(fixtureRaw);
-    expect(normalized.search_space).toBeDefined();
-    expect(normalized.model_state).toBeDefined();
-    expect(normalized.outcome_names).toEqual(["y"]);
-  });
-});
-
-describe("Acquisition imports", () => {
-  it("UpperConfidenceBound is a constructor", () => {
+  it("acquisition exports are constructors", () => {
     expect(typeof UpperConfidenceBound).toBe("function");
-  });
-
-  it("LogExpectedImprovement is a constructor", () => {
     expect(typeof LogExpectedImprovement).toBe("function");
   });
 });

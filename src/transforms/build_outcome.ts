@@ -48,7 +48,9 @@ export function buildOutcomeUntransform(state: OutcomeTransformState): OutcomeUn
     }
 
     default: {
-      throw new Error(`Unknown outcome transform type: ${(state as any).type}`);
+      // TypeScript exhaustiveness check: should never reach here if all cases are handled
+      // Note: type field may be undefined for legacy Standardize format, which is already handled above
+      throw new Error(`Unknown outcome transform type: ${String(state.type)}`);
     }
   }
 }

@@ -34,6 +34,10 @@ export class ExactGP {
   private readonly L: Matrix;
   private readonly alpha: Matrix;
 
+  // V matrix cache for sharing between predict() and predictCovarianceWith()
+  private cachedV: Matrix | null = null;
+  private cachedTestX: Matrix | null = null;
+
   constructor(
     trainX: Matrix,
     trainY: Matrix,
@@ -111,6 +115,28 @@ export class ExactGP {
     return testXNorm;
   }
 
+  /** Check if the cached V matrix is valid for the given test points. */
+  private isCachedVValid(testX: Matrix): boolean {
+    if (!this.cachedV || !this.cachedTestX) {
+      return false;
+    }
+    // Quick reference check first
+    if (this.cachedTestX === testX) {
+      return true;
+    }
+    // Fallback: dimension and content check
+    if (this.cachedTestX.rows !== testX.rows || this.cachedTestX.cols !== testX.cols) {
+      return false;
+    }
+    // Check if all values match
+    for (let i = 0; i < testX.rows * testX.cols; i++) {
+      if (this.cachedTestX.data[i] !== testX.data[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /** Compute V = L⁻¹ @ K*ᵀ for a set of transformed test points. */
   private computeV(Kstar: Matrix, nTest: number): Matrix {
     const KstarT = new Matrix(this.trainXNorm.rows, nTest);
@@ -142,6 +168,10 @@ export class ExactGP {
     // Posterior variance: diag(k**) - ||v||²
     const kssDiag = kernelDiag(this.kernel, testXNorm);
     const V = this.computeV(Kstar, testX.rows);
+
+    // Cache V for potential reuse in predictCovarianceWith
+    this.cachedV = V;
+    this.cachedTestX = testX;
 
     const variance = new Float64Array(testX.rows);
     for (let i = 0; i < testX.rows; i++) {
@@ -238,11 +268,17 @@ export class ExactGP {
     const refXNorm = this.transformInputs(refX);
 
     // Cross-covariance of test and ref with training data
-    const KstarTest = this.kernel.compute(testXNorm, this.trainXNorm);
     const KstarRef = this.kernel.compute(refXNorm, this.trainXNorm);
 
     // V matrices: L⁻¹ @ K*ᵀ
-    const Vtest = this.computeV(KstarTest, testX.rows);
+    // Reuse cached Vtest if available, otherwise compute fresh
+    let Vtest: Matrix;
+    if (this.isCachedVValid(testX)) {
+      Vtest = this.cachedV!;
+    } else {
+      const KstarTest = this.kernel.compute(testXNorm, this.trainXNorm);
+      Vtest = this.computeV(KstarTest, testX.rows);
+    }
     const Vref = this.computeV(KstarRef, refX.rows);
 
     // Prior covariance k(x_test, x_ref)

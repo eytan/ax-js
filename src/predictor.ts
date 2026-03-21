@@ -14,6 +14,7 @@ import type {
   AnyModelState,
   GPModelState,
   MultiTaskGPModelState,
+  PairwiseGPModelState,
   EnsembleGPModelState,
   KernelState,
   OutcomeTransformState,
@@ -193,13 +194,17 @@ export class Predictor {
     const name = outcomeName ?? this.outcomeNames[0];
     const ms = this._state.model_state;
     const sub = getSubModel(ms, this.outcomeNames, name);
+    // PairwiseGP uses 'utility' instead of 'train_Y'; EnsembleGP has no direct training data
+    if (sub.model_type === "EnsembleGP") {
+      return { X: [], Y: [], paramNames: this.paramNames };
+    }
     const trainX = sub.train_X;
-    const trainY = sub.train_Y;
+    const trainY = sub.model_type === "PairwiseGP" ? sub.utility : sub.train_Y;
     if (!trainX || !trainY) {
       return { X: [], Y: [], paramNames: this.paramNames };
     }
     const Y = this.untransformTrainY(name, trainY, sub);
-    return { X: trainX.map((row) => row.slice()), Y, paramNames: this.paramNames };
+    return { X: trainX.map((row: Array<number>) => row.slice()), Y, paramNames: this.paramNames };
   }
 
   /**
@@ -261,7 +266,10 @@ export class Predictor {
     const name = outcomeName ?? this.outcomeNames[0];
     const ms = this._state.model_state;
     const sub = getSubModel(ms, this.outcomeNames, name);
-    return findLengthscales(sub.kernel ?? (sub as any).data_kernel);
+    // MultiTaskGP stores kernel in data_kernel field instead of kernel
+    const kernel =
+      "kernel" in sub && sub.kernel ? sub.kernel : (sub as MultiTaskGPModelState).data_kernel;
+    return findLengthscales(kernel);
   }
 
   /**
@@ -304,9 +312,12 @@ export class Predictor {
     const name = outcomeName ?? this.outcomeNames[0];
     const ms = this._state.model_state;
     const sub = getSubModel(ms, this.outcomeNames, name);
-    const ls = findLengthscales(sub.kernel ?? (sub as any).data_kernel);
-    const inputTf = (sub as GPModelState).input_transform;
-    const warp = (sub as GPModelState).input_warp;
+    // MultiTaskGP stores kernel in data_kernel field instead of kernel
+    const kernel =
+      "kernel" in sub && sub.kernel ? sub.kernel : (sub as MultiTaskGPModelState).data_kernel;
+    const ls = findLengthscales(kernel);
+    const inputTf = "input_transform" in sub ? sub.input_transform : undefined;
+    const warp = "input_warp" in sub ? sub.input_warp : undefined;
     const warpIndicesSet = warp?.indices ? new Set(warp.indices) : null;
     const params = this.paramSpecs;
     const eps = 1e-7;
@@ -582,10 +593,10 @@ export class Predictor {
   private untransformTrainY(
     outcomeName: string,
     trainY: Array<number>,
-    subModel: { outcome_transform?: OutcomeTransformState; [k: string]: any },
+    subModel: SubModelState,
   ): Array<number> {
     // Layer 2 (innermost): undo model-level outcome transform
-    const outTf = (subModel as GPModelState).outcome_transform;
+    const outTf = "outcome_transform" in subModel ? subModel.outcome_transform : undefined;
     let Y = unstandardizeY(trainY, outTf);
     // Layer 1 (outermost): undo adapter-level transforms
     const adapterUt = this.adapterUntransforms?.get(outcomeName);
@@ -717,17 +728,19 @@ function buildAdapterUntransforms(
 
 // ── Predictor helper functions ────────────────────────────────────────────
 
+/** Result type for getSubModel: covers GPModelState, MultiTaskGPModelState, PairwiseGPModelState, and EnsembleGPModelState. */
+type SubModelState =
+  | GPModelState
+  | MultiTaskGPModelState
+  | PairwiseGPModelState
+  | EnsembleGPModelState;
+
 /** Get the sub-model state for a specific outcome. */
 function getSubModel(
   ms: AnyModelState,
   outcomeNames: Array<string>,
   outcomeName: string,
-): {
-  train_X?: Array<Array<number>>;
-  train_Y?: Array<number>;
-  kernel?: KernelState;
-  [k: string]: any;
-} {
+): SubModelState {
   if (ms.model_type === "ModelListGP") {
     const idx = outcomeNames.indexOf(outcomeName);
     if (idx === -1) {

@@ -13,7 +13,7 @@ a JSON `ExperimentState`, deserialized in TypeScript, and used to compute GP
 posteriors in the browser or Node.js.
 
 All computations use Float64 (double precision) throughout. The global numerical
-tolerance for parity with BoTorch is `1e-6`.
+tolerance for parity with BoTorch is `1e-8`.
 
 ## Source Layout
 

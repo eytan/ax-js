@@ -16,7 +16,7 @@ import { Predictor } from "../../src/predictor";
 import { relativizePredictions } from "../../src/transforms/relativize";
 
 const fixturesDir = join(__dirname, "..", "fixtures");
-const TOLERANCE = 1e-6;
+const TOLERANCE = 1e-8;
 
 function loadFixture(filename: string): any {
   const raw = readFileSync(join(fixturesDir, filename), "utf8");

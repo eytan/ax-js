@@ -31,7 +31,7 @@ const MINIMUM_FIXTURES = 32;
 
 // Single global tolerance for all fixtures.
 // All computations use Float64 — any diff > 1e-5 indicates a real bug.
-const TOLERANCE = 1e-6;
+const TOLERANCE = 1e-8;
 
 function loadFixture(filename: string): FixtureData {
   const raw = readFileSync(join(fixturesDir, filename), "utf8");
@@ -369,7 +369,7 @@ describe("BoTorch parity", () => {
       console.log(`Worst-case: mean=${formatSci(worstMean)}, variance=${formatSci(worstVar)}`);
       console.log(`Tolerance: ${formatSci(TOLERANCE)} (global)`);
       console.log(
-        "Diffs normalized: |a-b| / (atol + rtol*|b|) with atol=rtol=1e-6; values \u2264 1.0 pass",
+        "Diffs normalized: |a-b| / (atol + rtol*|b|) with atol=rtol=1e-8; values \u2264 1.0 pass",
       );
       console.log(sep + "\n");
 

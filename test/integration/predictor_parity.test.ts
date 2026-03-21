@@ -31,7 +31,7 @@ import { relativizePredictions } from "../../src/transforms/relativize.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, "..", "fixtures");
 
-const TOLERANCE = 1e-6;
+const TOLERANCE = 1e-8;
 
 function loadFixture(filename: string): FixtureData {
   const raw = readFileSync(join(fixturesDir, filename), "utf8");
