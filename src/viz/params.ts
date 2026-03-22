@@ -8,6 +8,15 @@ import { Rng } from "../acquisition/sample_mvn.js";
 export { normalizeFixture, normalizeExperimentData } from "./fixture";
 export type { NormalizedExperiment } from "./fixture";
 
+/** Extract ParamSpec array from predictor, falling back to range-only specs. */
+export function getParamSpecs(predictor: RenderPredictor): Array<ParamSpec> {
+  if (predictor.paramSpecs) return predictor.paramSpecs;
+  return predictor.paramBounds.map(([lo, hi]) => ({
+    type: "range" as const,
+    bounds: [lo, hi] as [number, number],
+  }));
+}
+
 /** Returns true if the parameter is a choice parameter. */
 export function isChoice(p: ParamSpec): boolean {
   return p.type === "choice";

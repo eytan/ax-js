@@ -40,9 +40,6 @@ export function applyDotHighlight(
       d.el.setAttribute("stroke", "rgba(68,68,68,1)");
       d.el.setAttribute("stroke-width", "2");
       d.el.setAttribute("r", String(d.defaultR + 2));
-      if (d.whisker) {
-        d.whisker.setAttribute("stroke", "rgba(217,95,78,0.5)");
-      }
       if (d.whiskers) {
         for (const w of d.whiskers) w.setAttribute("stroke", "rgba(217,95,78,0.5)");
       }
@@ -53,9 +50,6 @@ export function applyDotHighlight(
       d.el.setAttribute("stroke", `rgba(68,68,68,${Math.max(0.15, fa * 0.6).toFixed(3)})`);
       d.el.setAttribute("stroke-width", "1");
       d.el.setAttribute("r", String(d.defaultR));
-      if (d.whisker) {
-        d.whisker.setAttribute("stroke", `rgba(217,95,78,${(fa * 0.35).toFixed(3)})`);
-      }
       if (d.whiskers) {
         for (const w of d.whiskers) w.setAttribute("stroke", `rgba(217,95,78,${(fa * 0.35).toFixed(3)})`);
       }
@@ -70,9 +64,6 @@ export function clearDotHighlight(dots: Array<DotInfo>): void {
     d.el.setAttribute("stroke", d.defaultStroke);
     d.el.setAttribute("stroke-width", "1");
     d.el.setAttribute("r", String(d.defaultR));
-    if (d.whisker) {
-      d.whisker.setAttribute("stroke", "rgba(217,95,78,0.3)");
-    }
     if (d.whiskers) {
       for (const w of d.whiskers) w.setAttribute("stroke", "rgba(217,95,78,0.3)");
     }

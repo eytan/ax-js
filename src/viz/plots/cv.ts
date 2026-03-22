@@ -9,13 +9,10 @@ import {
   findNearestDot,
   buildPointTooltipHtml,
 } from "../dots";
-import { injectScopedStyles } from "../styles";
+import { injectScopedStyles, CTRL_CSS } from "../styles";
 import { createTooltipDiv, positionTooltip, removeTooltip, makeSelectEl } from "../widgets";
 
 import { svgEl } from "./_svg";
-
-const CTRL_CSS =
-  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
 
 /** Panel interface for cross-panel highlight coordination. */
 interface HighlightPanel {
@@ -341,7 +338,7 @@ function renderCVPanel(
       idx: i,
       pt: td.X[i] ?? [],
       el: dot,
-      whisker,
+      whiskers: [whisker],
       defaultFill,
       defaultStroke,
       defaultR: dotR,

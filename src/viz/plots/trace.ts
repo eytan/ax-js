@@ -3,13 +3,10 @@
 import type { RenderPredictor, OptimizationTraceOptions, DotInfo } from "../types";
 
 import { attachDotInteractivity } from "../dots";
-import { injectScopedStyles } from "../styles";
+import { injectScopedStyles, CTRL_CSS } from "../styles";
 import { createOutcomeSelector, createTooltipDiv, removeTooltip, makeSelectEl } from "../widgets";
 
 import { svgEl } from "./_svg";
-
-const CTRL_CSS =
-  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
 
 /** Controller for programmatic interaction with an interactive optimization trace plot. */
 export interface OptimizationTraceController {

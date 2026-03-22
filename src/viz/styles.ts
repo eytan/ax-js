@@ -11,6 +11,10 @@
  * producing selectors like `#axjs_abc .axjs-slider` with specificity (1,1,0).
  */
 
+/** Shared CSS for plot control bars (outcome selectors, axis dropdowns, sliders). */
+export const CTRL_CSS =
+  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
+
 export const AXJS_STYLES = `
 :scope .axjs-slider {
   -webkit-appearance: auto;

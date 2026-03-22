@@ -3933,16 +3933,20 @@ var Ax;
     createParamSliders: () => createParamSliders,
     createTooltipDiv: () => createTooltipDiv,
     defaultParamValue: () => defaultParamValue,
+    deltaRelativize: () => deltaRelativize,
     drawColorbar: () => drawColorbar,
     drawDataDot: () => drawDataDot,
     estimateRange: () => estimateRange,
     findNearestDot: () => findNearestDot,
     formatParamValue: () => formatParamValue,
+    formatPct: () => formatPct,
+    getParamSpecs: () => getParamSpecs,
     hideTooltip: () => hideTooltip,
     injectScopedStyles: () => injectScopedStyles,
     injectStyles: () => injectStyles,
     isChoice: () => isChoice,
     isInteger: () => isInteger,
+    naiveRelPct: () => naiveRelPct,
     normalizeExperimentData: () => normalizeExperimentData,
     normalizeFixture: () => normalizeFixture,
     piYG: () => piYG,
@@ -3961,12 +3965,14 @@ var Ax;
     renderScatter: () => renderScatter,
     renderScatterStatic: () => renderScatterStatic,
     renderSlicePlot: () => renderSlicePlot,
+    resolveStatusQuo: () => resolveStatusQuo,
     setupFileUpload: () => setupFileUpload,
     showTooltip: () => showTooltip,
     viridis: () => viridis
   });
 
   // src/viz/styles.ts
+  var CTRL_CSS = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   var AXJS_STYLES = `
 :scope .axjs-slider {
   -webkit-appearance: auto;
@@ -4235,9 +4241,6 @@ var Ax;
         d.el.setAttribute("stroke", "rgba(68,68,68,1)");
         d.el.setAttribute("stroke-width", "2");
         d.el.setAttribute("r", String(d.defaultR + 2));
-        if (d.whisker) {
-          d.whisker.setAttribute("stroke", "rgba(217,95,78,0.5)");
-        }
         if (d.whiskers) {
           for (const w of d.whiskers) w.setAttribute("stroke", "rgba(217,95,78,0.5)");
         }
@@ -4248,9 +4251,6 @@ var Ax;
         d.el.setAttribute("stroke", `rgba(68,68,68,${Math.max(0.15, fa * 0.6).toFixed(3)})`);
         d.el.setAttribute("stroke-width", "1");
         d.el.setAttribute("r", String(d.defaultR));
-        if (d.whisker) {
-          d.whisker.setAttribute("stroke", `rgba(217,95,78,${(fa * 0.35).toFixed(3)})`);
-        }
         if (d.whiskers) {
           for (const w of d.whiskers) w.setAttribute("stroke", `rgba(217,95,78,${(fa * 0.35).toFixed(3)})`);
         }
@@ -4263,9 +4263,6 @@ var Ax;
       d.el.setAttribute("stroke", d.defaultStroke);
       d.el.setAttribute("stroke-width", "1");
       d.el.setAttribute("r", String(d.defaultR));
-      if (d.whisker) {
-        d.whisker.setAttribute("stroke", "rgba(217,95,78,0.3)");
-      }
       if (d.whiskers) {
         for (const w of d.whiskers) w.setAttribute("stroke", "rgba(217,95,78,0.3)");
       }
@@ -4485,6 +4482,13 @@ var Ax;
   var normalizeFixture = normalizeExperimentData;
 
   // src/viz/params.ts
+  function getParamSpecs(predictor) {
+    if (predictor.paramSpecs) return predictor.paramSpecs;
+    return predictor.paramBounds.map(([lo, hi]) => ({
+      type: "range",
+      bounds: [lo, hi]
+    }));
+  }
   function isChoice(p) {
     return p.type === "choice";
   }
@@ -4612,6 +4616,30 @@ var Ax;
       }
     }
     return Array.from(signs).map((s) => s >= 0 ? 1 : -1);
+  }
+
+  // src/viz/relativize.ts
+  function deltaRelativize(mT, sT, mC, sC) {
+    const absC = Math.abs(mC);
+    const rHat = (mT - mC) / absC - sC * sC * mT / (absC * absC * absC);
+    const variance = (sT * sT + (mT / mC * sC) ** 2) / (mC * mC);
+    return [rHat * 100, Math.sqrt(Math.max(0, variance)) * 100];
+  }
+  function naiveRelPct(y, sqMean) {
+    return (y - sqMean) / Math.abs(sqMean) * 100;
+  }
+  function formatPct(v) {
+    const sign = v > 0 ? "+" : "";
+    const abs = Math.abs(v);
+    if (abs === 0) return "0.0%";
+    if (abs < 1e-3) return sign + v.toExponential(1) + "%";
+    if (abs < 0.1) return sign + v.toFixed(3) + "%";
+    if (abs < 1) return sign + v.toFixed(2) + "%";
+    if (abs < 100) return sign + v.toFixed(1) + "%";
+    return sign + v.toFixed(0) + "%";
+  }
+  function resolveStatusQuo(predictor, options) {
+    return options?.statusQuoPoint ?? predictor.statusQuoPoint ?? null;
   }
 
   // src/viz/widgets.ts
@@ -5014,7 +5042,6 @@ var Ax;
   }
 
   // src/viz/plots/importance.ts
-  var CTRL_CSS = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   var SEG_CSS = "display:inline-flex;border:1px solid #d0d0d0;border-radius:6px;overflow:hidden;font-size:11px";
   var SEG_BTN = "padding:3px 10px;cursor:pointer;border:none;outline:none;background:#fff;color:#555";
   var SEG_BTN_ACTIVE = "padding:3px 10px;cursor:pointer;border:none;outline:none;background:#4872f9;color:#fff";
@@ -5352,7 +5379,6 @@ var Ax;
   }
 
   // src/viz/plots/cv.ts
-  var CTRL_CSS2 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   function renderCrossValidation(container, predictor, options) {
     const interactive = options?.interactive !== false;
     if (!interactive) {
@@ -5377,7 +5403,7 @@ var Ax;
     let selectedOutcome = options?.outcome ?? (hasMulti ? "__all__" : predictor.outcomeNames[0]);
     const tooltip = createTooltipDiv(container.id);
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS2;
+    controlsDiv.style.cssText = CTRL_CSS;
     const plotsDiv = document.createElement("div");
     plotsDiv.style.cssText = "display:flex;gap:12px;flex-wrap:wrap";
     container.append(controlsDiv);
@@ -5611,7 +5637,7 @@ var Ax;
         idx: i,
         pt: td.X[i] ?? [],
         el: dot,
-        whisker,
+        whiskers: [whisker],
         defaultFill,
         defaultStroke,
         defaultR: dotR
@@ -5769,7 +5795,6 @@ var Ax;
   }
 
   // src/viz/plots/trace.ts
-  var CTRL_CSS3 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   function renderOptimizationTrace(container, predictor, options) {
     const interactive = options?.interactive !== false;
     if (!interactive) {
@@ -5793,7 +5818,7 @@ var Ax;
     let selectedOutcome = options?.outcome ?? predictor.outcomeNames[0];
     const tooltip = createTooltipDiv(container.id);
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS3;
+    controlsDiv.style.cssText = CTRL_CSS;
     const plotsDiv = document.createElement("div");
     container.append(controlsDiv);
     container.append(plotsDiv);
@@ -6013,48 +6038,6 @@ var Ax;
   }
 
   // src/viz/plots/slice.ts
-  var CTRL_CSS4 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
-  function resolveStatusQuo(predictor, options) {
-    return options?.statusQuoPoint ?? predictor.statusQuoPoint ?? null;
-  }
-  function deltaRelativize(mT, sT, mC, sC) {
-    const absC = Math.abs(mC);
-    const rHat = (mT - mC) / absC - sC * sC * mT / (absC * absC * absC);
-    const variance = (sT * sT + (mT / mC * sC) ** 2) / (mC * mC);
-    return [rHat * 100, Math.sqrt(Math.max(0, variance)) * 100];
-  }
-  function naiveRelPct(y, sqMean) {
-    return (y - sqMean) / Math.abs(sqMean) * 100;
-  }
-  function formatPct(v) {
-    const sign = v > 0 ? "+" : "";
-    const abs = Math.abs(v);
-    if (abs === 0) {
-      return "0.0%";
-    }
-    if (abs < 1e-3) {
-      return sign + v.toExponential(1) + "%";
-    }
-    if (abs < 0.1) {
-      return sign + v.toFixed(3) + "%";
-    }
-    if (abs < 1) {
-      return sign + v.toFixed(2) + "%";
-    }
-    if (abs < 100) {
-      return sign + v.toFixed(1) + "%";
-    }
-    return sign + v.toFixed(0) + "%";
-  }
-  function getParamSpecs(predictor) {
-    if (predictor.paramSpecs) {
-      return predictor.paramSpecs;
-    }
-    return predictor.paramBounds.map(([lo, hi]) => ({
-      type: "range",
-      bounds: [lo, hi]
-    }));
-  }
   function renderSlicePlot(container, predictor, options) {
     const interactive = options?.interactive !== false;
     if (!interactive) {
@@ -6131,7 +6114,7 @@ var Ax;
     const isSingleLayout = options?.layout === "single";
     let selectedDim = null;
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS4 + "padding:8px 16px;";
+    controlsDiv.style.cssText = CTRL_CSS + "padding:8px 16px;";
     const slidersDiv = document.createElement("div");
     slidersDiv.style.cssText = "margin-bottom:8px;padding:0 16px;";
     const plotsDiv = document.createElement("div");
@@ -6748,45 +6731,6 @@ var Ax;
   }
 
   // src/viz/plots/surface.ts
-  function resolveStatusQuo2(predictor, options) {
-    return options?.statusQuoPoint ?? predictor.statusQuoPoint ?? null;
-  }
-  function deltaRelativize2(mT, sT, mC, sC) {
-    const absC = Math.abs(mC);
-    const rHat = (mT - mC) / absC - sC * sC * mT / (absC * absC * absC);
-    const variance = (sT * sT + (mT / mC * sC) ** 2) / (mC * mC);
-    return [rHat * 100, Math.sqrt(Math.max(0, variance)) * 100];
-  }
-  function formatPct2(v) {
-    const sign = v > 0 ? "+" : "";
-    const abs = Math.abs(v);
-    if (abs === 0) {
-      return "0.0%";
-    }
-    if (abs < 1e-3) {
-      return sign + v.toExponential(1) + "%";
-    }
-    if (abs < 0.1) {
-      return sign + v.toFixed(3) + "%";
-    }
-    if (abs < 1) {
-      return sign + v.toFixed(2) + "%";
-    }
-    if (abs < 100) {
-      return sign + v.toFixed(1) + "%";
-    }
-    return sign + v.toFixed(0) + "%";
-  }
-  function getParamSpecs2(predictor) {
-    if (predictor.paramSpecs) {
-      return predictor.paramSpecs;
-    }
-    return predictor.paramBounds.map(([lo, hi]) => ({
-      type: "range",
-      bounds: [lo, hi]
-    }));
-  }
-  var CTRL_CSS5 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   function renderResponseSurface(container, predictor, options) {
     const interactive = options?.interactive !== false;
     if (!interactive) {
@@ -6811,7 +6755,7 @@ var Ax;
     container.innerHTML = "";
     injectScopedStyles(container);
     let selectedOutcome = options?.outcome ?? predictor.outcomeNames[0];
-    const params = getParamSpecs2(predictor);
+    const params = getParamSpecs(predictor);
     const initOrder = computeDimOrder(
       predictor,
       predictor.paramNames.length,
@@ -6826,11 +6770,11 @@ var Ax;
     const tooltip = createTooltipDiv(container.id);
     const globalRangeData = estimateRange(predictor);
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS5 + "padding:8px 16px;";
+    controlsDiv.style.cssText = CTRL_CSS + "padding:8px 16px;";
     const plotsDiv = document.createElement("div");
     plotsDiv.style.cssText = "padding:4px 8px 12px;";
     const axisDiv = document.createElement("div");
-    axisDiv.style.cssText = CTRL_CSS5 + "padding:4px 16px 0;";
+    axisDiv.style.cssText = CTRL_CSS + "padding:4px 16px 0;";
     const slidersDiv = document.createElement("div");
     slidersDiv.style.cssText = "margin-bottom:8px;padding:0 16px;";
     container.append(controlsDiv);
@@ -6915,8 +6859,8 @@ var Ax;
             if (sqPred && Math.abs(sqPred.mean[0]) >= 1e-15) {
               const sqM = sqPred.mean[0];
               const sqS = Math.sqrt(sqPred.variance[0]);
-              const [relMin] = deltaRelativize2(er.muMin, 0, sqM, sqS);
-              const [relMax] = deltaRelativize2(er.muMax, 0, sqM, sqS);
+              const [relMin] = deltaRelativize(er.muMin, 0, sqM, sqS);
+              const [relMax] = deltaRelativize(er.muMax, 0, sqM, sqS);
               const relStdMin = er.stdMin / Math.abs(sqM) * 100;
               const relStdMax = er.stdMax / Math.abs(sqM) * 100;
               const maxAbs = Math.max(Math.abs(relMin), Math.abs(relMax));
@@ -7097,7 +7041,7 @@ var Ax;
     const gridSize = options?.gridSize ?? 80;
     const bounds = predictor.paramBounds;
     const names = predictor.paramNames;
-    const params = getParamSpecs2(predictor);
+    const params = getParamSpecs(predictor);
     const fixedValues = fixedValuesOverride?.slice() ?? options?.fixedValues?.slice() ?? params.map((p) => defaultParamValue(p));
     const ML = 48;
     const MT = 18;
@@ -7141,7 +7085,7 @@ var Ax;
     let sqStd = 0;
     let relativeActive = false;
     if (isRelative) {
-      const sq = resolveStatusQuo2(predictor, options);
+      const sq = resolveStatusQuo(predictor, options);
       if (sq) {
         const sqPred = predictor.predict([sq])[outcome];
         if (sqPred) {
@@ -7161,7 +7105,7 @@ var Ax;
       means = [];
       stds = [];
       for (let i = 0; i < rawMeans.length; i++) {
-        const [rm, rs] = deltaRelativize2(rawMeans[i], rawStds[i], sqMean, sqStd);
+        const [rm, rs] = deltaRelativize(rawMeans[i], rawStds[i], sqMean, sqStd);
         means.push(rm);
         stds.push(rs);
       }
@@ -7246,7 +7190,7 @@ var Ax;
     const meanColorFn = relativeActive ? piYG : viridis;
     const meanImg = buildHeatmap(means, meanMin, meanMax, meanColorFn);
     const stdImg = buildHeatmap(stds, stdMin, stdMax, plasma);
-    const meanFmtLabel = relativeActive ? formatPct2 : void 0;
+    const meanFmtLabel = relativeActive ? formatPct : void 0;
     const panels = [
       {
         title: relativeActive ? "% change vs control" : "posterior mean",
@@ -7440,7 +7384,7 @@ var Ax;
             const idx = gj * nColsX + gi;
             const mu = means[idx] ?? 0;
             const s = stds[idx] ?? 0;
-            const muLabel = relativeActive ? `\u0394 = ${formatPct2(mu)}` : `\u03BC = ${mu.toFixed(4)}`;
+            const muLabel = relativeActive ? `\u0394 = ${formatPct(mu)}` : `\u03BC = ${mu.toFixed(4)}`;
             const sLabel = relativeActive ? `\u03C3 = ${s.toFixed(1)}%` : `\u03C3 = ${s.toFixed(4)}`;
             tooltip.innerHTML = `<b>${names[dimX]}</b>: ${formatParamValue(xVal, params[dimX])}<br><b>${names[dimY]}</b>: ${formatParamValue(yVal, params[dimY])}<br>${muLabel}<br>${sLabel}`;
             tooltip.style.display = "block";
@@ -7496,7 +7440,6 @@ var Ax;
   }
 
   // src/viz/plots/scatter.ts
-  var CTRL_CSS6 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   function resolveAxisData(predictor, name) {
     if (predictor.outcomeNames.includes(name)) {
       const td = predictor.getTrainingData(name);
@@ -7840,7 +7783,7 @@ var Ax;
     let selYName = options?.yAxis ?? (allNames.length > 1 ? allNames[1] : allNames[0]);
     const tooltip = createTooltipDiv(container.id);
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS6;
+    controlsDiv.style.cssText = CTRL_CSS;
     const plotsDiv = document.createElement("div");
     container.append(controlsDiv);
     container.append(plotsDiv);
@@ -7925,7 +7868,6 @@ var Ax;
   }
 
   // src/viz/plots/pareto.ts
-  var CTRL_CSS7 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   function computeParetoFrontier(points, xMax, yMax) {
     if (points.length === 0) return [];
     const indices = points.map((_, i) => i);
@@ -8011,7 +7953,7 @@ var Ax;
     const dirs = { ...directions };
     const tooltip = createTooltipDiv(container.id);
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS7;
+    controlsDiv.style.cssText = CTRL_CSS;
     const plotsDiv = document.createElement("div");
     container.append(controlsDiv);
     container.append(plotsDiv);
@@ -8132,9 +8074,7 @@ var Ax;
         yLabel: yOutcome,
         width: W,
         height: H,
-        renderAnnotation: (svg, margin, pw, ph, sxFn, syFn) => {
-          const sx = sxFn;
-          const sy = syFn;
+        renderAnnotation: (svg, margin, pw, ph, sx, sy) => {
           const plotL = margin.left;
           const plotR = margin.left + pw;
           const plotT = margin.top;
@@ -8276,7 +8216,6 @@ var Ax;
   }
 
   // src/viz/plots/observed_predicted.ts
-  var CTRL_CSS8 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
   function renderObservedPredicted(container, predictor, options) {
     const interactive = options?.interactive !== false;
     const W = options?.width ?? 440;
@@ -8301,7 +8240,7 @@ var Ax;
     let selectedOutcome = options?.outcome ?? predictor.outcomeNames[0];
     const tooltip = createTooltipDiv(container.id);
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS8;
+    controlsDiv.style.cssText = CTRL_CSS;
     const plotsDiv = document.createElement("div");
     container.append(controlsDiv);
     container.append(plotsDiv);
@@ -8417,23 +8356,6 @@ var Ax;
   }
 
   // src/viz/plots/effects.ts
-  var CTRL_CSS9 = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
-  function deltaRelativize3(mT, sT, mC, sC) {
-    const absC = Math.abs(mC);
-    const rHat = (mT - mC) / absC - sC * sC * mT / (absC * absC * absC);
-    const variance = (sT * sT + (mT / mC * sC) ** 2) / (mC * mC);
-    return [rHat * 100, Math.sqrt(Math.max(0, variance)) * 100];
-  }
-  function formatPct3(v) {
-    const sign = v > 0 ? "+" : "";
-    const abs = Math.abs(v);
-    if (abs === 0) return "0.0%";
-    if (abs < 1e-3) return sign + v.toExponential(1) + "%";
-    if (abs < 0.1) return sign + v.toFixed(3) + "%";
-    if (abs < 1) return sign + v.toFixed(2) + "%";
-    if (abs < 100) return sign + v.toFixed(1) + "%";
-    return sign + v.toFixed(0) + "%";
-  }
   function renderEffectsPlot(container, predictor, options) {
     const interactive = options?.interactive !== false;
     const W = options?.width ?? 520;
@@ -8475,7 +8397,7 @@ var Ax;
     const sqPoint = options?.statusQuoPoint ?? predictor.statusQuoPoint ?? null;
     const tooltip = createTooltipDiv(container.id);
     const controlsDiv = document.createElement("div");
-    controlsDiv.style.cssText = CTRL_CSS9;
+    controlsDiv.style.cssText = CTRL_CSS;
     const plotsDiv = document.createElement("div");
     container.append(controlsDiv);
     container.append(plotsDiv);
@@ -8580,7 +8502,7 @@ var Ax;
         predValues = [];
         predSigmas = [];
         for (let i = 0; i < n; i++) {
-          const [rm, rs] = deltaRelativize3(
+          const [rm, rs] = deltaRelativize(
             predicted[i],
             predStd[i],
             sqMean,
@@ -8633,7 +8555,7 @@ var Ax;
       })
     );
     const nYTicks = 5;
-    const fmtY = relActive ? formatPct3 : (v) => v.toFixed(2);
+    const fmtY = relActive ? formatPct : (v) => v.toFixed(2);
     for (let t = 0; t <= nYTicks; t++) {
       const v = ylo + (yhi - ylo) * t / nYTicks;
       svg.append(
@@ -8882,9 +8804,9 @@ var Ax;
           const i = dots[hitIdx].idx;
           let html = `<div style="font-weight:600;color:#666;margin-bottom:4px">${outcome} \u2014 trial ${i}</div>`;
           if (relActive) {
-            html += `observed = <span style="color:#d95f4e">${formatPct3(obsValues[i])}</span><br>`;
-            html += `LOO predicted = <span style="color:#4872f9">${formatPct3(predValues[i])}</span><br>`;
-            html += `\xB1 2\u03C3 = [${formatPct3(predValues[i] - 2 * predSigmas[i])}, ${formatPct3(predValues[i] + 2 * predSigmas[i])}]`;
+            html += `observed = <span style="color:#d95f4e">${formatPct(obsValues[i])}</span><br>`;
+            html += `LOO predicted = <span style="color:#4872f9">${formatPct(predValues[i])}</span><br>`;
+            html += `\xB1 2\u03C3 = [${formatPct(predValues[i] - 2 * predSigmas[i])}, ${formatPct(predValues[i] + 2 * predSigmas[i])}]`;
           } else {
             html += `observed = <span style="color:#d95f4e">${obsValues[i].toFixed(4)}</span><br>`;
             html += `LOO predicted = <span style="color:#4872f9">${predValues[i].toFixed(4)}</span><br>`;
@@ -9190,7 +9112,7 @@ var Ax;
       nextCandidateId
     };
   }
-  function deltaRelativize4(mean, sem, sqMean, sqSem) {
+  function deltaRelativize2(mean, sem, sqMean, sqSem) {
     const absC = Math.abs(sqMean);
     if (absC < 1e-10) throw new Error("Control mean \u2248 0");
     const rHat = ((mean - sqMean) / absC - sqSem * sqSem * mean / (absC * absC * absC)) * 100;
@@ -9215,7 +9137,7 @@ var Ax;
       }
       const sqSem = Math.sqrt(Math.max(0, sqVar));
       try {
-        result[name] = deltaRelativize4(mean, sem, sqMean, sqSem);
+        result[name] = deltaRelativize2(mean, sem, sqMean, sqSem);
       } catch {
         result[name] = null;
       }

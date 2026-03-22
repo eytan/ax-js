@@ -8,7 +8,8 @@ import {
   clearDotHighlight,
   findNearestDot,
 } from "../dots";
-import { injectScopedStyles } from "../styles";
+import { deltaRelativize, formatPct } from "../relativize";
+import { injectScopedStyles, CTRL_CSS } from "../styles";
 import {
   createOutcomeSelector,
   createTooltipDiv,
@@ -19,9 +20,6 @@ import {
 
 import { svgEl } from "./_svg";
 
-const CTRL_CSS =
-  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
-
 type SortMode = "trial" | "predicted" | "observed";
 
 /** Controller for programmatic interaction with an effects plot. */
@@ -29,33 +27,6 @@ export interface EffectsPlotController {
   setOutcome(name: string): void;
   setSort(sort: SortMode): void;
   destroy(): void;
-}
-
-/**
- * Delta-method relativization (matches Ax's `relativize`).
- * Returns [relMean%, relStd%].
- */
-function deltaRelativize(
-  mT: number,
-  sT: number,
-  mC: number,
-  sC: number,
-): [number, number] {
-  const absC = Math.abs(mC);
-  const rHat = (mT - mC) / absC - (sC * sC * mT) / (absC * absC * absC);
-  const variance = (sT * sT + ((mT / mC) * sC) ** 2) / (mC * mC);
-  return [rHat * 100, Math.sqrt(Math.max(0, variance)) * 100];
-}
-
-function formatPct(v: number): string {
-  const sign = v > 0 ? "+" : "";
-  const abs = Math.abs(v);
-  if (abs === 0) return "0.0%";
-  if (abs < 0.001) return sign + v.toExponential(1) + "%";
-  if (abs < 0.1) return sign + v.toFixed(3) + "%";
-  if (abs < 1) return sign + v.toFixed(2) + "%";
-  if (abs < 100) return sign + v.toFixed(1) + "%";
-  return sign + v.toFixed(0) + "%";
 }
 
 /**

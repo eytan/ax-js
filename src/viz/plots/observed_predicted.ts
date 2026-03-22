@@ -2,7 +2,7 @@
 
 import type { RenderPredictor, ObservedPredictedOptions } from "../types";
 
-import { injectScopedStyles } from "../styles";
+import { injectScopedStyles, CTRL_CSS } from "../styles";
 import {
   createOutcomeSelector,
   createTooltipDiv,
@@ -12,9 +12,6 @@ import {
 
 import { svgEl } from "./_svg";
 import { renderScatterStatic, type ScatterPointData } from "./scatter";
-
-const CTRL_CSS =
-  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
 
 /** Controller for programmatic interaction with an observed vs predicted plot. */
 export interface ObservedPredictedController {

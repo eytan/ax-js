@@ -3,7 +3,7 @@
 import type { RenderPredictor, FeatureImportanceOptions } from "../types";
 
 import { computeParamSigns } from "../params.js";
-import { injectScopedStyles } from "../styles";
+import { injectScopedStyles, CTRL_CSS } from "../styles";
 import {
   createOutcomeSelector,
   createTooltipDiv,
@@ -13,9 +13,6 @@ import {
 } from "../widgets";
 
 import { svgEl } from "./_svg";
-
-const CTRL_CSS =
-  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
 const SEG_CSS =
   "display:inline-flex;border:1px solid #d0d0d0;border-radius:6px;overflow:hidden;font-size:11px";
 const SEG_BTN =

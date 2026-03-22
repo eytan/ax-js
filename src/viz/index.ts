@@ -39,12 +39,21 @@ export {
   isInteger,
   defaultParamValue,
   formatParamValue,
+  getParamSpecs,
   normalizeFixture,
   normalizeExperimentData,
   computeDimOrder,
   computeParamSigns,
   pointRelevance,
 } from "./params";
+
+// ── Relativization helpers ───────────────────────────────────────────────
+export {
+  deltaRelativize,
+  naiveRelPct,
+  formatPct,
+  resolveStatusQuo,
+} from "./relativize";
 
 // ── Tooltip helpers ───────────────────────────────────────────────────────
 export {

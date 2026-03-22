@@ -57,16 +57,14 @@ export interface DotInfo {
   idx: number;
   pt: Array<number>;
   el: SVGCircleElement;
-  /** Optional whisker element (CV plot). */
-  whisker?: SVGLineElement;
+  /** Associated whisker/CI line elements that fade with NN highlighting. */
+  whiskers?: Array<SVGLineElement>;
   /** Default fill when not highlighted. */
   defaultFill: string;
   /** Default stroke when not highlighted. */
   defaultStroke: string;
   /** Default radius. */
   defaultR: number;
-  /** Additional whisker elements (x/y CI lines for scatter plots). */
-  whiskers?: Array<SVGLineElement>;
 }
 
 /** Options for renderFeatureImportance. */

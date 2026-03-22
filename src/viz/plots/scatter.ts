@@ -9,13 +9,10 @@ import {
   findNearestDot,
   buildPointTooltipHtml,
 } from "../dots";
-import { injectScopedStyles } from "../styles";
+import { injectScopedStyles, CTRL_CSS } from "../styles";
 import { createTooltipDiv, positionTooltip, removeTooltip, makeSelectEl } from "../widgets";
 
 import { svgEl } from "./_svg";
-
-const CTRL_CSS =
-  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
 
 /** Data for one scatter point. */
 export interface ScatterPointData {
@@ -60,8 +57,8 @@ export interface ScatterConfig {
     margin: Margin,
     pw: number,
     ph: number,
-    sx?: (v: number) => number,
-    sy?: (v: number) => number,
+    sx: (v: number) => number,
+    sy: (v: number) => number,
   ) => void;
   /** Custom tooltip builder. Falls back to buildPointTooltipHtml. */
   buildTooltip?: (idx: number) => string;

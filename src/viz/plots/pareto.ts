@@ -2,14 +2,11 @@
 
 import type { RenderPredictor, ParetoPlotOptions } from "../types";
 
-import { injectScopedStyles } from "../styles";
+import { injectScopedStyles, CTRL_CSS } from "../styles";
 import { createTooltipDiv, removeTooltip, makeSelectEl } from "../widgets";
 
 import { svgEl } from "./_svg";
 import { renderScatterStatic, type ScatterPointData } from "./scatter";
-
-const CTRL_CSS =
-  "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;pointer-events:auto";
 
 /** Controller for programmatic interaction with a Pareto plot. */
 export interface ParetoPlotController {
@@ -295,9 +292,7 @@ function renderParetoStatic(
       yLabel: yOutcome,
       width: W,
       height: H,
-      renderAnnotation: (svg, margin, pw, ph, sxFn, syFn) => {
-        const sx = sxFn!;
-        const sy = syFn!;
+      renderAnnotation: (svg, margin, pw, ph, sx, sy) => {
         // Render PF lines ON TOP of dots using <line> segments (not <path>)
         // for reliable first-paint rendering.
         const plotL = margin.left;
