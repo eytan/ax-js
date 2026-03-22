@@ -235,7 +235,10 @@ function buildDom(container: HTMLElement): DomRefs {
   btnCopy.innerHTML = COPY_ICON;
   rpActions.appendChild(btnCopy);
 
-  rpHeader.append(btnPrev, rpTitle, btnNext, rpActions);
+  const navGroup = document.createElement("div");
+  navGroup.style.cssText = "display:flex;gap:0;flex-shrink:0";
+  navGroup.append(btnPrev, btnNext);
+  rpHeader.append(navGroup, rpTitle, rpActions);
 
   const rpBars = document.createElement("div");
   rpBars.className = "ck-bars";
@@ -368,6 +371,7 @@ export function renderCockpit(
   const hiddenGenMethods: Record<string, boolean> = {};
   let sliderOutcome: string | null = null;
   let sliderDimOrder: Array<number> | null = null;
+  let hoveredDeltoidRow: string | null = null;
 
   // Sticky ranges: only expand when data hits the edge, shrink when
   // all data falls within 50% of the current range.
@@ -538,6 +542,23 @@ export function renderCockpit(
     );
   }
 
+  function applyBadgeHover(rowName: string | null): void {
+    const svg = dom.rpBars.querySelector("svg");
+    if (!svg) return;
+    for (const attr of ["data-badge-x", "data-badge-y"]) {
+      svg.querySelectorAll(`[${attr}]`).forEach((rect) => {
+        const name = rect.getAttribute(attr)!;
+        const isActive = rect.getAttribute("fill") === "#4872f9";
+        const persist = rect.hasAttribute("data-persist");
+        const show = isActive || persist || name === rowName;
+        rect.setAttribute("opacity", show ? "1" : "0");
+        rect.setAttribute("pointer-events", show ? "auto" : "none");
+        const text = rect.nextElementSibling;
+        if (text) text.setAttribute("opacity", show ? "1" : "0");
+      });
+    }
+  }
+
   function showDeltoid(item?: CockpitSelection | null): void {
     if (!data) return;
     const displayItem = item ?? selectedItem ?? hoveredItem ?? null;
@@ -552,6 +573,7 @@ export function renderCockpit(
       metricConfigs: data.metricConfigs,
       optimizationConfig: data.optimizationConfig,
     });
+    if (hoveredDeltoidRow) applyBadgeHover(hoveredDeltoidRow);
   }
 
   function renderSliders(): void {
@@ -762,25 +784,98 @@ export function renderCockpit(
     renderSliders();
   });
 
-  // ── Deltoid outcome click → reorder sliders ──
+  // ── Deltoid click → badge axis assignment or text importance toggle ──
   dom.rpBars.addEventListener("click", (e) => {
     let el = e.target as HTMLElement | null;
+    let outcome: string | null = null;
     while (el && el !== dom.rpBars) {
-      const outcome = el.getAttribute?.("data-outcome");
-      if (outcome) {
-        if (sliderOutcome === outcome) {
-          sliderOutcome = null;
-          sliderDimOrder = null;
+      const badgeX = el.getAttribute?.("data-badge-x");
+      const badgeY = el.getAttribute?.("data-badge-y");
+      if (badgeX || badgeY) {
+        const metricName = (badgeX ?? badgeY)!;
+        const metricIdx = data!.outcomeNames.indexOf(metricName);
+        if (metricIdx < 0) return;
+
+        if (badgeX) {
+          if (metricIdx === xOutIdx) {
+            // Already X axis — just update importance panel
+            sliderOutcome = metricName;
+            sliderDimOrder = computeDimOrder(metricName);
+            renderSliders();
+            showDeltoid();
+          } else {
+            // Assign as X axis; swap if this metric is currently Y
+            if (metricIdx === yOutIdx) {
+              yOutIdx = xOutIdx;
+              dom.selY.value = String(yOutIdx);
+            }
+            xOutIdx = metricIdx;
+            dom.selX.value = String(xOutIdx);
+            sliderOutcome = metricName;
+            sliderDimOrder = computeDimOrder(metricName);
+            renderScatter();
+            showDeltoid();
+            renderSliders();
+          }
         } else {
-          sliderOutcome = outcome;
-          sliderDimOrder = computeDimOrder(outcome);
+          if (metricIdx === yOutIdx) {
+            // Already Y axis — just update importance panel
+            sliderOutcome = metricName;
+            sliderDimOrder = computeDimOrder(metricName);
+            renderSliders();
+            showDeltoid();
+          } else {
+            // Assign as Y axis; swap if this metric is currently X
+            if (metricIdx === xOutIdx) {
+              xOutIdx = yOutIdx;
+              dom.selX.value = String(xOutIdx);
+            }
+            yOutIdx = metricIdx;
+            dom.selY.value = String(yOutIdx);
+            sliderOutcome = metricName;
+            sliderDimOrder = computeDimOrder(metricName);
+            renderScatter();
+            showDeltoid();
+            renderSliders();
+          }
         }
-        renderSliders();
-        showDeltoid();
         return;
+      }
+      // Track outcome group for text-click fallback
+      if (!outcome) {
+        const oc = el.getAttribute?.("data-outcome");
+        if (oc) outcome = oc;
       }
       el = el.parentNode as HTMLElement | null;
     }
+    // No badge clicked — select importance for this metric
+    if (outcome && sliderOutcome !== outcome) {
+      sliderOutcome = outcome;
+      sliderDimOrder = computeDimOrder(outcome);
+      renderSliders();
+      showDeltoid();
+    }
+  });
+
+  // ── Deltoid badge hover visibility ──
+  dom.rpBars.addEventListener("mouseover", (e) => {
+    let el = e.target as HTMLElement | null;
+    let rowName: string | null = null;
+    while (el && el !== dom.rpBars) {
+      const attr = el.getAttribute?.("data-badges-row")
+        ?? el.getAttribute?.("data-outcome");
+      if (attr) { rowName = attr; break; }
+      el = el.parentNode as HTMLElement | null;
+    }
+    if (rowName !== hoveredDeltoidRow) {
+      hoveredDeltoidRow = rowName;
+      applyBadgeHover(rowName);
+    }
+  });
+
+  dom.rpBars.addEventListener("mouseleave", () => {
+    hoveredDeltoidRow = null;
+    applyBadgeHover(null);
   });
 
   // ── Deltoid drag-to-reorder metrics ──
@@ -789,7 +884,9 @@ export function renderCockpit(
     let dragOrigIdx = -1;
     let lastTargetIdx = -1;
     let ghostEl: HTMLElement | null = null;
+    let dragStartY = -1;
     const ROW_H = 30, TOP_PAD = 20;
+    const DRAG_THRESHOLD = 5;
 
     function findDragHandle(el: EventTarget | null): string | null {
       let node = el as HTMLElement | null;
@@ -806,7 +903,7 @@ export function renderCockpit(
       if (!svgEl) return -1;
       const rect = svgEl.getBoundingClientRect();
       const localY = e.clientY - rect.top - TOP_PAD;
-      return Math.max(0, Math.min(customMetricOrder.length - 1, Math.round(localY / ROW_H)));
+      return Math.max(0, Math.min(customMetricOrder.length - 1, Math.floor(localY / ROW_H)));
     }
 
     function updateIndicator(targetIdx: number): void {
@@ -842,6 +939,7 @@ export function renderCockpit(
       dragName = name;
       dragOrigIdx = customMetricOrder.indexOf(name);
       lastTargetIdx = dragOrigIdx;
+      dragStartY = e.clientY;
       dom.rpBars.setPointerCapture(e.pointerId);
       dom.rpBars.style.cursor = "grabbing";
       styleSource(name, true);
@@ -878,10 +976,12 @@ export function renderCockpit(
       dom.rpBars.querySelector("svg")?.querySelector("#drag-indicator")?.remove();
       if (ghostEl) { ghostEl.remove(); ghostEl = null; }
 
+      const moved = Math.abs(e.clientY - dragStartY) > DRAG_THRESHOLD;
       const targetIdx = getTargetIdx(e);
-      if (targetIdx >= 0 && targetIdx !== dragOrigIdx) {
+      if (moved && targetIdx >= 0 && targetIdx !== dragOrigIdx) {
         customMetricOrder.splice(dragOrigIdx, 1);
-        customMetricOrder.splice(targetIdx, 0, dragName);
+        const insertIdx = targetIdx > dragOrigIdx ? targetIdx - 1 : targetIdx;
+        customMetricOrder.splice(insertIdx, 0, dragName!);
         showDeltoid();
       } else {
         styleSource(dragName, false);
@@ -912,14 +1012,20 @@ export function renderCockpit(
   dom.selX.addEventListener("change", () => {
     xOutIdx = +dom.selX.value;
     if (xOutIdx === yOutIdx) { yOutIdx = (xOutIdx + 1) % data!.outcomeNames.length; dom.selY.value = String(yOutIdx); }
+    sliderOutcome = data!.outcomeNames[xOutIdx] ?? null;
+    sliderDimOrder = sliderOutcome ? computeDimOrder(sliderOutcome) : null;
     renderScatter();
     showDeltoid();
+    renderSliders();
   });
   dom.selY.addEventListener("change", () => {
     yOutIdx = +dom.selY.value;
     if (yOutIdx === xOutIdx) { xOutIdx = (yOutIdx + 1) % data!.outcomeNames.length; dom.selX.value = String(xOutIdx); }
+    sliderOutcome = data!.outcomeNames[yOutIdx] ?? null;
+    sliderDimOrder = sliderOutcome ? computeDimOrder(sliderOutcome) : null;
     renderScatter();
     showDeltoid();
+    renderSliders();
   });
   dom.selSQ.addEventListener("change", () => {
     if (!data) return;
@@ -995,9 +1101,11 @@ export function renderCockpit(
 
   // ── loadData ──
 
+  // TODO: Add performance profiling (loadCockpitData, computeAllRelData, sobol, render)
   function loadData(rawData: unknown, PredCls: PredictorConstructor, opts?: CockpitOptions): void {
     data = loadCockpitData(rawData, PredCls, opts?.metricConfigs);
     computeAllRelData(data.arms, data.candidates, data.sqIdx, data.predictor, data.outcomeNames);
+
     customMetricOrder = computeDefaultMetricOrder(data.outcomeNames, data.metricConfigs);
 
     // Clear caches and reset sticky ranges
@@ -1010,10 +1118,11 @@ export function renderCockpit(
     selectedItem = data.arms.length > 0 ? { type: "arm", idx: 0 } : null;
     prevSelectedItem = null;
     hoveredItem = null;
-    sliderOutcome = data.outcomeNames[0] ?? null;
-    sliderDimOrder = sliderOutcome ? computeDimOrder(sliderOutcome) : null;
 
     populateDropdowns();
+    sliderOutcome = data.outcomeNames[xOutIdx] ?? null;
+    sliderDimOrder = sliderOutcome ? computeDimOrder(sliderOutcome) : null;
+
     renderLegend();
     updateSubtitle();
     renderScatter();

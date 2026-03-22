@@ -9495,7 +9495,7 @@ var Ax;
         s += `<circle cx="${handleW / 2 + 1.5}" cy="${dotY}" r="1.2" fill="#bbb"/>`;
       }
       s += "</g>";
-      s += `<g data-outcome="${name}" style="cursor:pointer">`;
+      s += `<g data-outcome="${name}">`;
       let violated = false;
       let violatedBound = null;
       let violatedOp = null;
@@ -9528,19 +9528,12 @@ var Ax;
           }
         }
       }
-      if (violated) {
-        s += `<text x="${handleW + 2}" y="${cy + 5}" fill="#d32f2f" font-size="13" font-weight="700" font-family="sans-serif">\u26A0</text>`;
-      }
+      const xBadgeX = handleW + 2;
+      const yBadgeX = handleW + 18;
+      const isX = name === options.xOutcome;
+      const isY = name === options.yOutcome;
       const metricType = isObj ? "Objective" : constraint ? "Constraint" : "Tracking metric";
       s += `<text data-tip="${metricType}" x="${handleW + labelW - 4}" y="${cy + 4}" text-anchor="end" fill="${labelColor}" font-size="11" font-family="sans-serif"${isActiveOutcome ? ' font-weight="600"' : ""}>${labelText}</text>`;
-      let axisLabel = null;
-      if (name === options.xOutcome) axisLabel = "X";
-      if (name === options.yOutcome) axisLabel = "Y";
-      if (axisLabel) {
-        const badgeX = handleW + 2;
-        s += `<rect x="${badgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="#4872f9"/>`;
-        s += `<text x="${badgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif">${axisLabel}</text>`;
-      }
       if (r) {
         const desiredSign = outcomeDesiredSign(name, options.metricConfigs);
         let cols = ciColors(r.mean, r.sem, desiredSign);
@@ -9594,9 +9587,18 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         }
         const valStr = `${r.mean.toFixed(2)}\xB1${(1.96 * r.sem).toFixed(2)}%`;
         s += `<text x="${handleW + labelW + pad + barW + pad * 2}" y="${cy + 4}" fill="${violated ? "#c66" : "#777"}" font-size="10" font-family="sans-serif">${valStr}</text>`;
+        if (violated) {
+          s += `<text x="${handleW + labelW + pad + barW + pad * 2 + valW - 8}" y="${cy + 5}" fill="#d32f2f" font-size="13" font-weight="700" font-family="sans-serif">\u26A0</text>`;
+        }
       } else {
         s += `<text x="${handleW + labelW + pad + barW / 2}" y="${cy + 4}" text-anchor="middle" fill="#999" font-size="10" font-style="italic" font-family="sans-serif">N/A</text>`;
       }
+      s += `<g class="axis-badges" data-badges-row="${name}">`;
+      s += `<rect data-badge-x="${name}" x="${xBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isX ? "#4872f9" : "#c0c0c0"}" opacity="${isX ? "1" : "0"}" data-tip="${isX ? "X axis (click for importance)" : "Set as X axis"}" style="cursor:pointer"/>`;
+      s += `<text x="${xBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${isX ? "1" : "0"}">X</text>`;
+      s += `<rect data-badge-y="${name}" x="${yBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isY ? "#4872f9" : "#c0c0c0"}" opacity="${isY ? "1" : "0"}" data-tip="${isY ? "Y axis (click for importance)" : "Set as Y axis"}" style="cursor:pointer"/>`;
+      s += `<text x="${yBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${isY ? "1" : "0"}">Y</text>`;
+      s += "</g>";
       s += "</g>";
     });
     s += "</svg>";
@@ -9968,6 +9970,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
     const hiddenGenMethods = {};
     let sliderOutcome = null;
     let sliderDimOrder = null;
+    let hoveredDeltoidRow = null;
     let stickyRange = null;
     let stickyScatterX = null;
     let stickyScatterY = null;
@@ -10119,6 +10122,20 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         yOutIdx
       );
     }
+    function applyBadgeHover(rowName) {
+      const svg = dom.rpBars.querySelector("svg");
+      if (!svg) return;
+      for (const attr of ["data-badge-x", "data-badge-y"]) {
+        svg.querySelectorAll(`[${attr}]`).forEach((rect) => {
+          const name = rect.getAttribute(attr);
+          const isActive = rect.getAttribute("fill") === "#4872f9";
+          const show = isActive || name === rowName;
+          rect.setAttribute("opacity", show ? "1" : "0");
+          const text = rect.nextElementSibling;
+          if (text) text.setAttribute("opacity", show ? "1" : "0");
+        });
+      }
+    }
     function showDeltoid(item) {
       if (!data) return;
       const displayItem = item ?? selectedItem ?? hoveredItem ?? null;
@@ -10133,6 +10150,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         metricConfigs: data.metricConfigs,
         optimizationConfig: data.optimizationConfig
       });
+      if (hoveredDeltoidRow) applyBadgeHover(hoveredDeltoidRow);
     }
     function renderSliders() {
       if (!data || !selectedItem) {
@@ -10347,21 +10365,85 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
     dom.rpBars.addEventListener("click", (e) => {
       let el = e.target;
       while (el && el !== dom.rpBars) {
-        const outcome = el.getAttribute?.("data-outcome");
-        if (outcome) {
-          if (sliderOutcome === outcome) {
-            sliderOutcome = null;
-            sliderDimOrder = null;
+        const badgeX = el.getAttribute?.("data-badge-x");
+        const badgeY = el.getAttribute?.("data-badge-y");
+        if (badgeX || badgeY) {
+          const metricName = badgeX ?? badgeY;
+          const metricIdx = data.outcomeNames.indexOf(metricName);
+          if (metricIdx < 0) return;
+          if (badgeX) {
+            if (metricIdx === xOutIdx) {
+              sliderOutcome = metricName;
+              sliderDimOrder = computeDimOrder2(metricName);
+              renderSliders();
+              showDeltoid();
+            } else {
+              if (metricIdx === yOutIdx) {
+                for (let i = 0; i < data.outcomeNames.length; i++) {
+                  if (i !== metricIdx) {
+                    yOutIdx = i;
+                    break;
+                  }
+                }
+                dom.selY.value = String(yOutIdx);
+              }
+              xOutIdx = metricIdx;
+              dom.selX.value = String(xOutIdx);
+              sliderOutcome = metricName;
+              sliderDimOrder = computeDimOrder2(metricName);
+              renderScatter2();
+              showDeltoid();
+              renderSliders();
+            }
           } else {
-            sliderOutcome = outcome;
-            sliderDimOrder = computeDimOrder2(outcome);
+            if (metricIdx === yOutIdx) {
+              sliderOutcome = metricName;
+              sliderDimOrder = computeDimOrder2(metricName);
+              renderSliders();
+              showDeltoid();
+            } else {
+              if (metricIdx === xOutIdx) {
+                for (let i = 0; i < data.outcomeNames.length; i++) {
+                  if (i !== metricIdx) {
+                    xOutIdx = i;
+                    break;
+                  }
+                }
+                dom.selX.value = String(xOutIdx);
+              }
+              yOutIdx = metricIdx;
+              dom.selY.value = String(yOutIdx);
+              sliderOutcome = metricName;
+              sliderDimOrder = computeDimOrder2(metricName);
+              renderScatter2();
+              showDeltoid();
+              renderSliders();
+            }
           }
-          renderSliders();
-          showDeltoid();
           return;
         }
         el = el.parentNode;
       }
+    });
+    dom.rpBars.addEventListener("mouseover", (e) => {
+      let el = e.target;
+      let rowName = null;
+      while (el && el !== dom.rpBars) {
+        const attr = el.getAttribute?.("data-badges-row") ?? el.getAttribute?.("data-outcome") ?? el.getAttribute?.("data-drag-handle");
+        if (attr) {
+          rowName = attr;
+          break;
+        }
+        el = el.parentNode;
+      }
+      if (rowName !== hoveredDeltoidRow) {
+        hoveredDeltoidRow = rowName;
+        applyBadgeHover(rowName);
+      }
+    });
+    dom.rpBars.addEventListener("mouseleave", () => {
+      hoveredDeltoidRow = null;
+      applyBadgeHover(null);
     });
     {
       let findDragHandle2 = function(el) {

@@ -16,8 +16,8 @@ export interface DeltoidOptions {
   customMetricOrder: Array<string>;
   panelRange: NiceRange;
   outcomeNames: Array<string>;
-  xOutcome: string;
-  yOutcome: string;
+  xOutcome?: string;
+  yOutcome?: string;
   sqIdx: number;
   sliderOutcome: string | null;
   metricConfigs: Array<MetricConfig>;
@@ -152,10 +152,12 @@ export function renderDeltoidPanel(
 
   let s = `<svg width="${totalW}" height="${totalH}" xmlns="http://www.w3.org/2000/svg">`;
 
-  // Layer 1: Alternating row stripes
-  sortedNames.forEach((_, k) => {
-    if (k % 2 === 1) {
-      const stripY = k * rowH + topPad;
+  // Layer 1: Alternating row stripes + active-outcome highlight
+  sortedNames.forEach((name, k) => {
+    const stripY = k * rowH + topPad;
+    if (options.sliderOutcome === name) {
+      s += `<rect x="0" y="${stripY}" width="${totalW}" height="${rowH}" fill="rgba(72,114,249,0.12)"/>`;
+    } else if (k % 2 === 1) {
       s += `<rect x="0" y="${stripY}" width="${totalW}" height="${rowH}" fill="#f7f7f7"/>`;
     }
   });
@@ -203,7 +205,9 @@ export function renderDeltoidPanel(
     }
     s += "</g>";
 
-    s += `<g data-outcome="${name}" style="cursor:pointer">`;
+    s += `<g data-outcome="${name}">`;
+    // Full-row hit area so hover detection works in the gap between handle and label
+    s += `<rect x="${handleW}" y="${cy - rowH / 2}" width="${totalW - handleW}" height="${rowH}" fill="transparent"/>`;
 
     // Check constraint violation
     let violated = false;
@@ -239,23 +243,15 @@ export function renderDeltoidPanel(
       }
     }
 
-    // Violation badge
-    if (violated) {
-      s += `<text x="${handleW + 2}" y="${cy + 5}" fill="#d32f2f" font-size="13" font-weight="700" font-family="sans-serif">\u26A0</text>`;
-    }
+    // X/Y axis badges — variables computed here, rendered last for z-order
+    const xBadgeX = handleW + 2;
+    const yBadgeX = handleW + 18;
+    const isX = options.xOutcome ? name === options.xOutcome : false;
+    const isY = options.yOutcome ? name === options.yOutcome : false;
 
     const metricType = isObj ? "Objective" : constraint ? "Constraint" : "Tracking metric";
-    s += `<text data-tip="${metricType}" x="${handleW + labelW - 4}" y="${cy + 4}" text-anchor="end" fill="${labelColor}" font-size="11" font-family="sans-serif"${isActiveOutcome ? ' font-weight="600"' : ""}>${labelText}</text>`;
+    s += `<text data-tip="${metricType}" x="${handleW + labelW - 4}" y="${cy + 4}" text-anchor="end" fill="${labelColor}" font-size="11" font-family="sans-serif" style="cursor:pointer"${isActiveOutcome ? ' font-weight="600"' : ""}>${labelText}</text>`;
 
-    // X/Y axis badge
-    let axisLabel: string | null = null;
-    if (name === options.xOutcome) axisLabel = "X";
-    if (name === options.yOutcome) axisLabel = "Y";
-    if (axisLabel) {
-      const badgeX = handleW + 2;
-      s += `<rect x="${badgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="#4872f9"/>`;
-      s += `<text x="${badgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif">${axisLabel}</text>`;
-    }
 
     if (r) {
       const desiredSign = outcomeDesiredSign(name, options.metricConfigs);
@@ -316,8 +312,22 @@ export function renderDeltoidPanel(
 
       const valStr = `${r.mean.toFixed(2)}\u00B1${(1.96 * r.sem).toFixed(2)}%`;
       s += `<text x="${handleW + labelW + pad + barW + pad * 2}" y="${cy + 4}" fill="${violated ? "#c66" : "#777"}" font-size="10" font-family="sans-serif">${valStr}</text>`;
+      if (violated) {
+        s += `<text x="${handleW + labelW + pad + barW + pad * 2 + valW - 8}" y="${cy + 5}" fill="#d32f2f" font-size="13" font-weight="700" font-family="sans-serif">\u26A0</text>`;
+      }
     } else {
       s += `<text x="${handleW + labelW + pad + barW / 2}" y="${cy + 4}" text-anchor="middle" fill="#999" font-size="10" font-style="italic" font-family="sans-serif">N/A</text>`;
+    }
+    // X/Y axis badges (rendered last to be on top in z-order)
+    // Only rendered when scatter axes are defined (cockpit mode)
+    if (options.xOutcome || options.yOutcome) {
+      const persist = isX || isY;
+      s += `<g class="axis-badges" data-badges-row="${name}">`;
+      s += `<rect data-badge-x="${name}" x="${xBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isX ? "#4872f9" : "#c0c0c0"}" opacity="${persist ? "1" : "0"}" pointer-events="${persist ? "auto" : "none"}"${persist ? " data-persist" : ""} data-tip="${isX ? "X axis (click for importance)" : "Set as X axis"}" style="cursor:pointer"/>`;
+      s += `<text x="${xBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${persist ? "1" : "0"}">X</text>`;
+      s += `<rect data-badge-y="${name}" x="${yBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isY ? "#4872f9" : "#c0c0c0"}" opacity="${persist ? "1" : "0"}" pointer-events="${persist ? "auto" : "none"}"${persist ? " data-persist" : ""} data-tip="${isY ? "Y axis (click for importance)" : "Set as Y axis"}" style="cursor:pointer"/>`;
+      s += `<text x="${yBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${persist ? "1" : "0"}">Y</text>`;
+      s += "</g>";
     }
     s += "</g>";
   });
