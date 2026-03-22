@@ -54,20 +54,32 @@ npm run build               # Build library + demos
 - `src/models/` — ExactGP, SingleTaskGP, ModelListGP, PairwiseGP, MultiTaskGP, EnsembleGP
 - `src/transforms/` — Normalize, Standardize, Log, Bilog, Power, Chained, Warp (Kumaraswamy)
 - `src/io/` — Deserialization from BoTorch export format
-- `src/predictor.ts` — High-level `Predictor` class (accepts `ExperimentState`, applies adapter untransforms)
+- `src/predictor.ts` — High-level `Predictor` class (accepts `ExperimentState`, applies adapter untransforms).
+  Exposes `outcomeDirections` and `objectiveThresholds` from `optimization_config`.
 - `src/acquisition/` — UCB, EI, LogEI, Thompson, EUBO, optimizeAcqf
 - `src/viz/` — Colormaps, data-point rendering, search-space helpers, embeddable plot functions
   - `types.ts` — Shared interfaces (RGB, ParamSpec, RenderPredictor, DotInfo, option types)
-  - `styles.ts` — CSS injection for slider/tooltip styling (fixes nbconvert pseudo-element issues)
+  - `styles.ts` — CSS injection + shared `CTRL_CSS` for control bars
+  - `relativize.ts` — Shared `deltaRelativize`, `formatPct`, `naiveRelPct`, `resolveStatusQuo`
   - `colormaps.ts` — viridis, plasma, drawColorbar, renderHeatmap
-  - `params.ts` — isChoice, isInteger, normalizeFixture, computeDimOrder, pointRelevance
+  - `params.ts` — isChoice, isInteger, getParamSpecs, normalizeFixture, computeDimOrder, pointRelevance
   - `widgets.ts` — createOutcomeSelector, createParamSliders, tooltip helpers
-  - `dots.ts` — Training dot interactivity (highlight, pin, kernel-distance)
-  - `plots/` — Embeddable render functions (importance, cv, trace, slice, surface)
+  - `dots.ts` — Training dot interactivity (highlight, pin, kernel-distance, whisker NN fading)
+  - `plots/` — Embeddable render functions:
+    - `importance.ts` — Feature importance bar chart (lengthscale or Sobol)
+    - `cv.ts` — Leave-one-out cross-validation scatter
+    - `trace.ts` — Optimization trace with running best (auto-infers minimize from directions)
+    - `slice.ts` — 1D posterior slices per parameter
+    - `surface.ts` — 2D response surface heatmaps (mean + std)
+    - `scatter.ts` — Generic scatter with axis resolution, CI whiskers, NN highlighting
+    - `pareto.ts` — Pareto frontier with hypervolume fill, objective thresholds, direction inference
+    - `observed_predicted.ts` — Observed vs predicted with diagonal, CI whiskers, R²
+    - `effects.ts` — Per-trial forest plot: LOO predictions with error bars, sortable
 - `python/_extraction.py` — Shared extraction logic (kernels, transforms, models). Requires BoTorch >= 0.17
 - `python/axjs_export.py` — User-facing export (imports from _extraction.py), returns `ExperimentState`
 - `python/generate_fixtures.py` — Benchmark fixture generation (imports from _extraction.py)
-- `test/fixtures/` — 46 JSON fixtures. See `docs/testing.md`
+- `test/fixtures/` — 51 JSON fixtures. See `docs/testing.md`
+- `demo/` — 10 self-contained HTML demos (scatter plots, cockpit, response surface, slice, etc.)
 
 ## Serialization Format
 
@@ -80,6 +92,7 @@ interface ExperimentState {
   outcome_names?: string[];
   status_quo?: { point: number[] };
   adapter_transforms?: AdapterTransform[];  // LogY, BilogY, StandardizeY, PowerTransformY
+  optimization_config?: OptimizationConfig;  // objectives, thresholds, constraints
 }
 ```
 

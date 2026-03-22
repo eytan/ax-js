@@ -181,7 +181,7 @@ export function renderResponseSurface(
           const sqPred = predictor.predict([sq])[selectedOutcome];
           if (sqPred && Math.abs(sqPred.mean[0]) >= 1e-15) {
             const sqM = sqPred.mean[0];
-            const sqS = Math.sqrt(sqPred.variance[0]);
+            const sqS = 0; // sqStd=0 for viz (see renderParetoStatic comment)
             const [relMin] = deltaRelativize(er.muMin, 0, sqM, sqS);
             const [relMax] = deltaRelativize(er.muMax, 0, sqM, sqS);
             const relStdMin = (er.stdMin / Math.abs(sqM)) * 100;
@@ -510,7 +510,10 @@ function renderResponseSurfaceStatic(
       const sqPred = predictor.predict([sq])[outcome];
       if (sqPred) {
         sqMean = sqPred.mean[0];
-        sqStd = Math.sqrt(sqPred.variance[0]);
+        // sqStd=0 for visualization: show prediction uncertainty relative
+        // to SQ level only. Full delta method with large sqStd produces
+        // meaninglessly wide CIs when the SQ is uncertain (e.g., predicted, not observed).
+        sqStd = 0;
         if (Math.abs(sqMean) >= 1e-15) {
           relativeActive = true;
         } else {
@@ -797,7 +800,10 @@ function renderResponseSurfaceStatic(
   // Attach interactivity to both canvases
   if (tooltip && tooltipContainer) {
     let hoverHighlight = false;
-    let pinnedDotDataIdx = -1;
+    // Restore pinnedDotDataIdx from persisted pin state after re-render
+    let pinnedDotDataIdx = _getPinned() >= 0
+      ? dotData.findIndex((d) => d.idx === _getPinned())
+      : -1;
 
     for (const ref of canvasRefs) {
       const rml = ref.ml;

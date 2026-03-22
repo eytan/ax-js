@@ -27,6 +27,23 @@ export function computeKernelRels(
   return { raw: rawRels, max: maxRel };
 }
 
+/** Compute kernel correlations from an arbitrary reference point to all dots. */
+export function computeKernelRelsFromPoint(
+  predictor: RenderPredictor,
+  dots: Array<DotInfo>,
+  refPoint: Array<number>,
+  outcome: string,
+): { raw: Array<number>; max: number } {
+  const rawRels: Array<number> = [];
+  let maxRel = 0;
+  for (let i = 0; i < dots.length; i++) {
+    const r = predictor.kernelCorrelation(dots[i].pt, refPoint, outcome);
+    rawRels.push(r);
+    if (r > maxRel) maxRel = r;
+  }
+  return { raw: rawRels, max: maxRel };
+}
+
 /** Apply kernel-distance-based highlight styling to SVG dot elements. */
 export function applyDotHighlight(
   dots: Array<DotInfo>,
@@ -53,6 +70,26 @@ export function applyDotHighlight(
       if (d.whiskers) {
         for (const w of d.whiskers) w.setAttribute("stroke", `rgba(217,95,78,${(fa * 0.35).toFixed(3)})`);
       }
+    }
+  }
+}
+
+/** Apply distance-based fading to all dots (no active/self dot). Used for mean-curve hover. */
+export function applyDotHighlightFromPoint(
+  dots: Array<DotInfo>,
+  rels: { raw: Array<number>; max: number },
+): void {
+  for (let i = 0; i < dots.length; i++) {
+    const d = dots[i];
+    const relNorm = rels.max > 0 ? rels.raw[i] / rels.max : 0;
+    const fa = Math.max(0.08, Math.min(0.9, Math.sqrt(relNorm)));
+    d.el.setAttribute("fill", `rgba(217,95,78,${fa.toFixed(3)})`);
+    d.el.setAttribute("stroke", `rgba(68,68,68,${Math.max(0.15, fa * 0.6).toFixed(3)})`);
+    d.el.setAttribute("stroke-width", "1");
+    d.el.setAttribute("r", String(d.defaultR));
+    if (d.whiskers) {
+      for (const w of d.whiskers)
+        w.setAttribute("stroke", `rgba(217,95,78,${(fa * 0.35).toFixed(3)})`);
     }
   }
 }

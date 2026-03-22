@@ -74,7 +74,9 @@ export {
 // ── Dot interactivity helpers ─────────────────────────────────────────────
 export {
   computeKernelRels,
+  computeKernelRelsFromPoint,
   applyDotHighlight,
+  applyDotHighlightFromPoint,
   clearDotHighlight,
   findNearestDot,
   buildPointTooltipHtml,

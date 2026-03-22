@@ -46,9 +46,24 @@ function loadFixtureData(data) {
   if (surface) surface.destroy();
   var container = document.getElementById('plotContainer');
   var isRelative = document.getElementById('modeSelect').value === 'relative';
-  var sqPoint = fixture.status_quo
-    ? fixture.status_quo.point
-    : predictor.paramBounds.map(function(b) { return (b[0] + b[1]) / 2; });
+  // Use real SQ if available; otherwise pick the training point closest to the center
+  var sqPoint = fixture.status_quo ? fixture.status_quo.point : null;
+  if (!sqPoint) {
+    var td = predictor.getTrainingData(predictor.outcomeNames[0]);
+    if (td.X.length > 0) {
+      var center = predictor.paramBounds.map(function(b) { return (b[0] + b[1]) / 2; });
+      var bestDist = Infinity, bestIdx = 0;
+      for (var i = 0; i < td.X.length; i++) {
+        var d = 0;
+        for (var j = 0; j < center.length; j++) {
+          var range = predictor.paramBounds[j][1] - predictor.paramBounds[j][0] || 1;
+          d += ((td.X[i][j] - center[j]) / range) * ((td.X[i][j] - center[j]) / range);
+        }
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      sqPoint = td.X[bestIdx];
+    }
+  }
   surface = Ax.viz.renderResponseSurface(container, predictor, {
     interactive: true,
     width: 800,

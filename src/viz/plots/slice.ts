@@ -8,7 +8,13 @@ import type {
   ParamSpec,
 } from "../types";
 
-import { applyDotHighlight, clearDotHighlight, computeKernelRels } from "../dots";
+import {
+  applyDotHighlight,
+  applyDotHighlightFromPoint,
+  clearDotHighlight,
+  computeKernelRels,
+  computeKernelRelsFromPoint,
+} from "../dots";
 import { estimateRange } from "../estimateRange";
 import { isChoice, isInteger, formatParamValue, computeDimOrder, getParamSpecs } from "../params";
 import { deltaRelativize, naiveRelPct, formatPct, resolveStatusQuo } from "../relativize";
@@ -90,7 +96,10 @@ export function renderSlicePlot(
       for (const name of predictor.outcomeNames) {
         const p = sqPred[name];
         if (p && Math.abs(p.mean[0]) >= 1e-15) {
-          sqStats[name] = { mean: p.mean[0], std: Math.sqrt(p.variance[0]) };
+          // std=0 for visualization: show only prediction uncertainty relative
+          // to SQ level, not SQ uncertainty itself. Full delta method with large
+          // sqStd produces meaninglessly wide CIs when the SQ is uncertain.
+          sqStats[name] = { mean: p.mean[0], std: 0 };
         }
       }
       if (Object.keys(sqStats).length === 0) {
@@ -104,27 +113,28 @@ export function renderSlicePlot(
   // Pre-compute stable y-axis via Halton + optimization
   const rawRange = estimateRange(predictor);
   const globalYRange: Record<string, { min: number; max: number }> = {};
-  for (const name of predictor.outcomeNames) {
-    const r = rawRange[name];
-    if (!r) {
-      continue;
+  function recomputeGlobalYRange(): void {
+    for (const name of predictor.outcomeNames) {
+      const r = rawRange[name];
+      if (!r) continue;
+      const sq = sqStats?.[name];
+      let lo: number, hi: number;
+      if (sq) {
+        lo = naiveRelPct(r.ciMin, sq.mean);
+        hi = naiveRelPct(r.ciMax, sq.mean);
+      } else {
+        lo = r.ciMin;
+        hi = r.ciMax;
+      }
+      const pad = 0.05 * (hi - lo);
+      globalYRange[name] = { min: lo - pad, max: hi + pad };
     }
-    const sq = sqStats?.[name];
-    let lo: number, hi: number;
-    if (sq) {
-      // Relativize the estimated range
-      lo = naiveRelPct(r.ciMin, sq.mean);
-      hi = naiveRelPct(r.ciMax, sq.mean);
-    } else {
-      lo = r.ciMin;
-      hi = r.ciMax;
-    }
-    const pad = 0.05 * (hi - lo);
-    globalYRange[name] = { min: lo - pad, max: hi + pad };
   }
+  recomputeGlobalYRange();
 
   // Shared pinned state — persists across re-renders
   let slicePinnedIdx = -1;
+  let pinnedCurvePoint: Array<number> | null = null;
 
   // Single-dim mode state
   const isSingleLayout = options?.layout === "single";
@@ -206,6 +216,7 @@ export function renderSlicePlot(
       slidersDiv,
       fixedValues,
       () => {
+        pinnedCurvePoint = null;
         redrawPlots();
       },
       { dimOrder: dimOrd },
@@ -228,16 +239,19 @@ export function renderSlicePlot(
         slicePinnedIdx = v;
       },
       (pt: Array<number>) => {
-        // Click-to-pin: snap sliders to clicked point's coordinates
+        // Snap sliders to clicked point's coordinates
         for (let j = 0; j < fixedValues.length; j++) {
           fixedValues[j] = pt[j];
         }
-        // Update slider values visually without rebuilding DOM
         rebuildSliders();
         redrawPlots();
       },
       sqStats,
       isSingleLayout && selectedDim !== null ? selectedDim : undefined,
+      pinnedCurvePoint,
+      (pt: Array<number> | null) => {
+        pinnedCurvePoint = pt;
+      },
     );
   }
 
@@ -253,6 +267,7 @@ export function renderSlicePlot(
       if (relative === isRelative) return;
       isRelative = relative;
       computeSqStats();
+      recomputeGlobalYRange();
       redrawPlots();
     },
     setOutcome(name: string) {
@@ -281,6 +296,10 @@ function renderSlicePlotStatic(
   onSnapToPoint?: (pt: Array<number>) => void,
   sqStats?: Record<string, { mean: number; std: number }>,
   singleDim?: number,
+  pinnedCurvePoint?: Array<number> | null,
+  setPinnedCurvePoint?: (pt: Array<number> | null) => void,
+  onHoverDim?: (dim: number, xValue: number) => void,
+  onHoverDimClear?: () => void,
 ): void {
   const numPoints = options?.numPoints ?? 80;
   // Single-dim mode renders larger by default
@@ -688,6 +707,33 @@ function renderSlicePlotStatic(
           computeKernelRels(predictor, sliceDots, pvIdx, outcome),
         );
       }
+    } else if (pinnedCurvePoint) {
+      // Restore curve-pin NN highlighting + blue dot
+      const rels = computeKernelRelsFromPoint(
+        predictor,
+        sliceDots,
+        pinnedCurvePoint,
+        outcome,
+      );
+      applyDotHighlightFromPoint(sliceDots, rels);
+      // Show the hover dot on the subplot whose dimension matches the pinned x value
+      const pinnedXVal = pinnedCurvePoint[dim];
+      if (pinnedXVal !== fixedValues[dim] || dimOrder.length === 1) {
+        // This subplot's dim was the one clicked (its value differs from fixedValues)
+        const screenX = dimIsChoice
+          ? sx(xs.indexOf(pinnedXVal))
+          : sx(pinnedXVal);
+        const pinnedIdx = dimIsChoice
+          ? xs.indexOf(pinnedXVal)
+          : Math.round(((pinnedXVal - xLo) / (xHi - xLo)) * (xs.length - 1));
+        const clampedIdx = Math.max(0, Math.min(xs.length - 1, pinnedIdx));
+        hoverDot.setAttribute("cx", String(screenX));
+        hoverDot.setAttribute("cy", String(sy(means[clampedIdx])));
+        (hoverDot as unknown as HTMLElement).style.display = "";
+        hoverLine.setAttribute("x1", String(screenX));
+        hoverLine.setAttribute("x2", String(screenX));
+        (hoverLine as unknown as HTMLElement).style.display = "";
+      }
     }
 
     // Interactivity
@@ -706,6 +752,28 @@ function renderSlicePlotStatic(
       }
 
       let hoverHighlight = false;
+      let hoverCurveIdx = -1; // index into xs[] when hovering the mean curve
+
+      // Restore pinned highlighting across all subplots (or clear if unpinned)
+      function restorePinnedOrClear(): void {
+        const pinnedIdx = _getPinned();
+        for (const subDots of allSubplotDots) {
+          if (pinnedIdx < 0) {
+            clearDotHighlight(subDots);
+          } else {
+            const subActiveIdx = subDots.findIndex((d) => d.idx === pinnedIdx);
+            if (subActiveIdx === -1) {
+              clearDotHighlight(subDots);
+            } else {
+              applyDotHighlight(
+                subDots,
+                subActiveIdx,
+                computeKernelRels(predictor, subDots, subActiveIdx, outcome),
+              );
+            }
+          }
+        }
+      }
 
       svg.addEventListener("mousemove", (e: MouseEvent) => {
         const rect = svg.getBoundingClientRect();
@@ -721,41 +789,39 @@ function renderSlicePlotStatic(
         const hitVpIdx = findHit(px, py);
 
         if (hitVpIdx >= 0) {
+          // ── Training dot hover ──
+          hoverCurveIdx = -1;
+          onHoverDimClear?.();
           const hitPt = sliceDots[hitVpIdx];
           (hoverLine as unknown as HTMLElement).style.display = "none";
           (hoverDot as unknown as HTMLElement).style.display = "none";
           svg.style.cursor = "pointer";
 
-          if (_getPinned() < 0) {
-            applyDotHighlight(
-              sliceDots,
-              hitVpIdx,
-              computeKernelRels(predictor, sliceDots, hitVpIdx, outcome),
-            );
-            hoverHighlight = true;
+          // NN highlight across ALL subplots (always, even when pinned)
+          for (const subDots of allSubplotDots) {
+            const subActiveIdx = subDots.findIndex((d) => d.idx === hitPt.idx);
+            if (subActiveIdx !== -1) {
+              applyDotHighlight(
+                subDots,
+                subActiveIdx,
+                computeKernelRels(predictor, subDots, subActiveIdx, outcome),
+              );
+            }
           }
+          hoverHighlight = true;
 
-          // Build tooltip for training point
-          let html = `<div style="font-size:11px;color:#999;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:4px">training point #${hitPt.idx + 1}</div>`;
-          const yLabel = relativeActive
-            ? `\u0394 = ${formatPct(tdY[hitPt.idx])}`
-            : `y = ${td.Y[hitPt.idx].toFixed(4)}`;
-          html += `<span style="color:#333;font-weight:500">${yLabel}</span><br>`;
-          html += names
-            .map(
-              (n, j) =>
-                `<span style="color:#666">${n}</span> = ${formatParamValue(td.X[hitPt.idx][j], params[j])}`,
-            )
-            .join("<br>");
-          tooltip.innerHTML = html;
+          // Compact tooltip: trial # + outcome value
+          const yVal = relativeActive
+            ? formatPct(tdY[hitPt.idx])
+            : td.Y[hitPt.idx].toFixed(4);
+          tooltip.innerHTML =
+            `<span style="color:#999">trial ${hitPt.idx + 1}</span> ` +
+            `<span style="color:#333;font-weight:500">${outcome} = ${yVal}</span>`;
           tooltip.style.display = "block";
           positionTooltip(tooltip, e.clientX, e.clientY);
         } else {
+          // ── Mean curve hover ──
           svg.style.cursor = "crosshair";
-          if (_getPinned() < 0 && hoverHighlight) {
-            clearDotHighlight(sliceDots);
-            hoverHighlight = false;
-          }
 
           // Hover line + dot on mean curve
           const frac = (px - margin.left) / pw;
@@ -767,6 +833,8 @@ function renderSlicePlotStatic(
             idx = Math.round(frac * (xs.length - 1));
             idx = Math.max(0, Math.min(xs.length - 1, idx));
           }
+          hoverCurveIdx = idx;
+          onHoverDim?.(dim, xs[idx]);
           const mu = means[idx],
             s = stds[idx];
           const screenX = dimIsChoice ? sx(idx) : sx(xs[idx]);
@@ -778,17 +846,28 @@ function renderSlicePlotStatic(
           hoverDot.setAttribute("cy", String(sy(mu)));
           (hoverDot as unknown as HTMLElement).style.display = "";
 
+          // NN highlight from the hovered curve point across ALL subplots
+          const hoverPt = fixedValues.slice();
+          hoverPt[dim] = xs[idx];
+          for (const subDots of allSubplotDots) {
+            const rels = computeKernelRelsFromPoint(
+              predictor,
+              subDots,
+              hoverPt,
+              outcome,
+            );
+            applyDotHighlightFromPoint(subDots, rels);
+          }
+          hoverHighlight = true;
+
+          // Compact two-line tooltip
           const xLabel = dimIsChoice ? String(p.values![idx]) : formatParamValue(xs[idx], p);
-          let html = `<div style="font-size:11px;color:#999;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:4px">${names[dim]}</div>`;
-          html += `<span style="color:#666">${names[dim]}</span> = ${xLabel}<br>`;
+          const ci = 1.96 * s;
+          let html = `<span style="color:#666">${names[dim]}</span> = ${xLabel}<br>`;
           if (relativeActive) {
-            html += `\u0394 = <span style="color:#4872f9;font-weight:500">${formatPct(mu)}</span><br>`;
-            html += `\u03C3 = ${s.toFixed(1)}%<br>`;
-            html += `95% CI: [${formatPct(mu - 2 * s)}, ${formatPct(mu + 2 * s)}]`;
+            html += `<span style="color:#4872f9;font-weight:500">${outcome} = ${formatPct(mu)} \u00B1 ${formatPct(ci)}</span>`;
           } else {
-            html += `\u03BC = <span style="color:#4872f9;font-weight:500">${mu.toFixed(4)}</span><br>`;
-            html += `\u03C3 = ${s.toFixed(4)}<br>`;
-            html += `95% CI: [${(mu - 2 * s).toFixed(4)}, ${(mu + 2 * s).toFixed(4)}]`;
+            html += `<span style="color:#4872f9;font-weight:500">${outcome} = ${mu.toFixed(4)} \u00B1 ${ci.toFixed(4)}</span>`;
           }
           tooltip.innerHTML = html;
           tooltip.style.display = "block";
@@ -803,47 +882,33 @@ function renderSlicePlotStatic(
         const hitVpIdx = findHit(px, py);
 
         if (hitVpIdx >= 0) {
+          // Clicking a training dot: clear any curve pin
+          setPinnedCurvePoint?.(null);
           const hitTrainIdx = sliceDots[hitVpIdx].idx;
           if (_getPinned() === hitTrainIdx) {
             _setPinned(-1);
-            clearDotHighlight(sliceDots);
           } else {
             _setPinned(hitTrainIdx);
-            // Snap sliders to clicked point's coordinates and re-render
             if (onSnapToPoint) {
               onSnapToPoint(sliceDots[hitVpIdx].pt);
               return; // onSnapToPoint triggers full redraw
             }
-            applyDotHighlight(
-              sliceDots,
-              hitVpIdx,
-              computeKernelRels(predictor, sliceDots, hitVpIdx, outcome),
-            );
           }
         } else {
           if (_getPinned() >= 0) {
             _setPinned(-1);
-            clearDotHighlight(sliceDots);
+          }
+          // Pivot: click on the mean curve pins the point and snaps sliders
+          if (hoverCurveIdx >= 0 && onSnapToPoint) {
+            const pivotPt = fixedValues.slice();
+            pivotPt[dim] = xs[hoverCurveIdx];
+            setPinnedCurvePoint?.(pivotPt);
+            onSnapToPoint(pivotPt);
+            return; // onSnapToPoint triggers full redraw
           }
         }
         hoverHighlight = false;
-        // Cross-subplot coordination
-        for (const subDots of allSubplotDots) {
-          if (_getPinned() < 0) {
-            clearDotHighlight(subDots);
-          } else {
-            const subActiveIdx = subDots.findIndex((d) => d.idx === _getPinned());
-            if (subActiveIdx === -1) {
-              clearDotHighlight(subDots);
-            } else {
-              applyDotHighlight(
-                subDots,
-                subActiveIdx,
-                computeKernelRels(predictor, subDots, subActiveIdx, outcome),
-              );
-            }
-          }
-        }
+        restorePinnedOrClear();
       });
 
       svg.addEventListener("mouseleave", () => {
@@ -851,8 +916,9 @@ function renderSlicePlotStatic(
         (hoverDot as unknown as HTMLElement).style.display = "none";
         svg.style.cursor = "crosshair";
         tooltip.style.display = "none";
-        if (_getPinned() < 0 && hoverHighlight) {
-          clearDotHighlight(sliceDots);
+        onHoverDimClear?.();
+        if (hoverHighlight) {
+          restorePinnedOrClear();
           hoverHighlight = false;
         }
       });
