@@ -3007,6 +3007,8 @@ var Ax = (() => {
     statusQuoPoint;
     /** Per-outcome optimization direction inferred from optimization_config. */
     outcomeDirections;
+    /** Per-outcome objective thresholds (reference point for hypervolume). */
+    objectiveThresholds;
     model;
     _state;
     adapterUntransforms;
@@ -3032,6 +3034,13 @@ var Ax = (() => {
         }
       }
       this.outcomeDirections = dirs;
+      const thresholds = {};
+      if (exported.optimization_config?.objective_thresholds) {
+        for (const t of exported.optimization_config.objective_thresholds) {
+          thresholds[t.name] = { bound: t.bound, op: t.op };
+        }
+      }
+      this.objectiveThresholds = thresholds;
       this.adapterUntransforms = buildAdapterUntransforms(
         exported.adapter_transforms,
         this.outcomeNames
@@ -7840,16 +7849,7 @@ var Ax;
     if (!interactive) {
       const xOut = options?.xOutcome ?? predictor.outcomeNames[0];
       const yOut = options?.yOutcome ?? predictor.outcomeNames[1];
-      renderParetoStatic(
-        container,
-        predictor,
-        xOut,
-        yOut,
-        W,
-        H,
-        directions,
-        options?.showStatusQuo
-      );
+      renderParetoStatic(container, predictor, xOut, yOut, W, H, directions);
       return {
         setXOutcome() {
         },
@@ -7868,29 +7868,12 @@ var Ax;
     injectScopedStyles(container);
     let selX = options?.xOutcome ?? predictor.outcomeNames[0];
     let selY = options?.yOutcome ?? predictor.outcomeNames[1];
-    const dirs = { ...directions };
     const tooltip = createTooltipDiv(container.id);
     const controlsDiv = document.createElement("div");
     controlsDiv.style.cssText = CTRL_CSS;
     const plotsDiv = document.createElement("div");
     container.append(controlsDiv);
     container.append(plotsDiv);
-    function makeDirBtn(getOutcome) {
-      const btn = document.createElement("button");
-      btn.style.cssText = "font-size:11px;padding:2px 6px;border-radius:4px;border:0.5px solid #d0d0d0;background:#f8f8f8;cursor:pointer;min-width:32px";
-      btn.addEventListener("click", () => {
-        const o = getOutcome();
-        dirs[o] = (dirs[o] ?? "max") === "max" ? "min" : "max";
-        syncBtn(btn, o);
-        redraw();
-      });
-      return btn;
-    }
-    function syncBtn(btn, outcome) {
-      const d = dirs[outcome] ?? "max";
-      btn.textContent = d;
-      btn.style.color = d === "min" ? "#d95f4e" : "#4872f9";
-    }
     const { wrapper: xW, select: xSel } = makeSelectEl("X:");
     const { wrapper: yW, select: ySel } = makeSelectEl("Y:");
     predictor.outcomeNames.forEach((name) => {
@@ -7905,17 +7888,12 @@ var Ax;
     });
     xSel.value = selX;
     ySel.value = selY;
-    const xDirBtn = makeDirBtn(() => selX);
-    const yDirBtn = makeDirBtn(() => selY);
-    syncBtn(xDirBtn, selX);
-    syncBtn(yDirBtn, selY);
     xSel.addEventListener("change", () => {
       selX = xSel.value;
       if (selX === selY) {
         selY = predictor.outcomeNames.find((n) => n !== selX) ?? selX;
         ySel.value = selY;
       }
-      syncBtn(xDirBtn, selX);
       redraw();
     });
     ySel.addEventListener("change", () => {
@@ -7924,12 +7902,27 @@ var Ax;
         selX = predictor.outcomeNames.find((n) => n !== selY) ?? selY;
         xSel.value = selX;
       }
-      syncBtn(yDirBtn, selY);
       redraw();
     });
-    xW.append(xDirBtn);
-    yW.append(yDirBtn);
     controlsDiv.append(xW, yW);
+    function dirLabel(outcome) {
+      const d = directions[outcome];
+      return d === "min" ? "\u2193 min" : d === "max" ? "\u2191 max" : "";
+    }
+    const xDirSpan = document.createElement("span");
+    xDirSpan.style.cssText = "font-size:10px;color:#999";
+    xDirSpan.textContent = dirLabel(selX);
+    const yDirSpan = document.createElement("span");
+    yDirSpan.style.cssText = "font-size:10px;color:#999";
+    yDirSpan.textContent = dirLabel(selY);
+    xW.append(xDirSpan);
+    yW.append(yDirSpan);
+    xSel.addEventListener("change", () => {
+      xDirSpan.textContent = dirLabel(selX);
+    });
+    ySel.addEventListener("change", () => {
+      yDirSpan.textContent = dirLabel(selY);
+    });
     function redraw() {
       plotsDiv.innerHTML = "";
       renderParetoStatic(
@@ -7939,8 +7932,7 @@ var Ax;
         selY,
         W,
         H,
-        dirs,
-        options?.showStatusQuo,
+        directions,
         tooltip,
         container
       );
@@ -7965,68 +7957,127 @@ var Ax;
       }
     };
   }
-  function renderParetoStatic(target, predictor, xOutcome, yOutcome, W, H, directions, showStatusQuo, tooltip, tooltipContainer) {
+  function renderParetoStatic(target, predictor, xOutcome, yOutcome, W, H, directions, tooltip, tooltipContainer) {
     const points = buildParetoPoints(predictor, xOutcome, yOutcome);
     const xMax = (directions[xOutcome] ?? "max") === "max";
     const yMax = (directions[yOutcome] ?? "max") === "max";
-    const activeFrontier = computeParetoFrontier(points, xMax, yMax);
-    const dualFrontier = computeParetoFrontier(points, !xMax, !yMax);
-    const sortedActive = [...activeFrontier].sort(
+    const frontier = computeParetoFrontier(points, xMax, yMax);
+    const sortedFrontier = [...frontier].sort(
       (a, b) => points[a].x - points[b].x
     );
-    const sortedDual = [...dualFrontier].sort(
-      (a, b) => points[a].x - points[b].x
-    );
-    const isActiveMaxMax = xMax && yMax;
-    const maxMaxSorted = isActiveMaxMax ? sortedActive : sortedDual;
-    const minMinSorted = isActiveMaxMax ? sortedDual : sortedActive;
-    const maxMaxIsActive = isActiveMaxMax;
-    const isMixed = xMax !== yMax;
+    const thresholds = predictor.objectiveThresholds ?? {};
+    const xThresh = thresholds[xOutcome];
+    const yThresh = thresholds[yOutcome];
+    const hasRefPoint = xThresh != null && yThresh != null;
+    const refX = xThresh?.bound;
+    const refY = yThresh?.bound;
     renderScatterStatic(
       target,
       predictor,
       xOutcome,
       {
         points,
-        xLabel: xOutcome,
-        yLabel: yOutcome,
+        xLabel: `${xOutcome}${directions[xOutcome] ? ` (${directions[xOutcome]})` : ""}`,
+        yLabel: `${yOutcome}${directions[yOutcome] ? ` (${directions[yOutcome]})` : ""}`,
         width: W,
         height: H,
+        renderOverlay: (svg, sx, sy, bounds) => {
+          if (hasRefPoint) {
+            svg.append(
+              svgEl("line", {
+                x1: sx(refX),
+                x2: sx(refX),
+                y1: sy(bounds.ylo),
+                y2: sy(bounds.yhi),
+                stroke: "rgba(0,0,0,0.2)",
+                "stroke-width": 1,
+                "stroke-dasharray": "4,3"
+              })
+            );
+            svg.append(
+              svgEl("line", {
+                x1: sx(bounds.xlo),
+                x2: sx(bounds.xhi),
+                y1: sy(refY),
+                y2: sy(refY),
+                stroke: "rgba(0,0,0,0.2)",
+                "stroke-width": 1,
+                "stroke-dasharray": "4,3"
+              })
+            );
+          }
+        },
         renderAnnotation: (svg, margin, pw, ph, sx, sy) => {
           const plotL = margin.left;
           const plotR = margin.left + pw;
           const plotT = margin.top;
           const plotB = margin.top + ph;
-          function drawStaircase(sorted, color, fillColor, sw, opa, extendYBetter, extendXBetter, cornerX, cornerY, reverse) {
-            if (sorted.length === 0) return;
-            const coords = sorted.map((fi) => [
-              sx(points[fi].x),
-              sy(points[fi].y)
-            ]);
-            const waypoints = [];
-            if (!reverse) {
-              waypoints.push([coords[0][0], extendYBetter]);
-              for (const c of coords) waypoints.push(c);
-              waypoints.push([extendXBetter, coords[coords.length - 1][1]]);
-            } else {
-              waypoints.push([coords[coords.length - 1][0], extendYBetter]);
-              for (let i = coords.length - 1; i >= 0; i--) waypoints.push(coords[i]);
-              waypoints.push([extendXBetter, coords[0][1]]);
-            }
-            const polyPoints = waypoints.map(([x, y]) => `${x},${y}`).concat([`${cornerX},${cornerY}`]).join(" ");
+          if (sortedFrontier.length === 0) return;
+          const coords = sortedFrontier.map((fi) => [
+            sx(points[fi].x),
+            sy(points[fi].y)
+          ]);
+          const extendY = yMax ? plotT : plotB;
+          const extendX = xMax ? plotR : plotL;
+          const waypoints = [];
+          waypoints.push([coords[0][0], extendY]);
+          for (const c of coords) waypoints.push(c);
+          waypoints.push([extendX, coords[coords.length - 1][1]]);
+          if (hasRefPoint) {
+            const refPx = sx(refX);
+            const refPy = sy(refY);
+            const clippedWaypoints = [];
+            const clipExtY = yMax ? Math.max(refPy, plotT) : Math.min(refPy, plotB);
+            const clipExtX = xMax ? Math.min(refPx, plotR) : Math.max(refPx, plotL);
+            clippedWaypoints.push([coords[0][0], clipExtY]);
+            for (const c of coords) clippedWaypoints.push(c);
+            clippedWaypoints.push([clipExtX, coords[coords.length - 1][1]]);
+            const polyPoints = clippedWaypoints.map(([x, y]) => `${x},${y}`).concat([`${clipExtX},${clipExtY}`]).join(" ");
             svg.append(
               svgEl("polygon", {
                 points: polyPoints,
-                fill: fillColor,
+                fill: "rgba(72,114,249,0.08)",
                 stroke: "none"
               })
             );
-            for (let i = 0; i < waypoints.length - 1; i++) {
-              const [x1, y1] = waypoints[i];
-              const [x2, y2] = waypoints[i + 1];
-              if (Math.abs(x1 - x2) < 0.5) {
+            svg.append(
+              svgEl("polygon", {
+                points: `${refPx},${refPy - 5} ${refPx + 5},${refPy} ${refPx},${refPy + 5} ${refPx - 5},${refPy}`,
+                fill: "rgba(0,0,0,0.3)",
+                stroke: "#fff",
+                "stroke-width": 1
+              })
+            );
+          }
+          const color = "#4872f9";
+          const sw = 2.5;
+          const opa = "0.7";
+          for (let i = 0; i < waypoints.length - 1; i++) {
+            const [x1, y1] = waypoints[i];
+            const [x2, y2] = waypoints[i + 1];
+            if (Math.abs(x1 - x2) < 0.5) {
+              svg.append(svgEl("line", {
+                x1,
+                y1,
+                x2,
+                y2,
+                stroke: color,
+                "stroke-width": sw,
+                opacity: opa
+              }));
+            } else {
+              svg.append(svgEl("line", {
+                x1,
+                y1,
+                x2,
+                y2: y1,
+                stroke: color,
+                "stroke-width": sw,
+                opacity: opa
+              }));
+              if (Math.abs(y1 - y2) > 0.5) {
                 svg.append(svgEl("line", {
-                  x1,
+                  x1: x2,
                   y1,
                   x2,
                   y2,
@@ -8034,64 +8085,10 @@ var Ax;
                   "stroke-width": sw,
                   opacity: opa
                 }));
-              } else {
-                svg.append(svgEl("line", {
-                  x1,
-                  y1,
-                  x2,
-                  y2: y1,
-                  stroke: color,
-                  "stroke-width": sw,
-                  opacity: opa
-                }));
-                if (Math.abs(y1 - y2) > 0.5) {
-                  svg.append(svgEl("line", {
-                    x1: x2,
-                    y1,
-                    x2,
-                    y2,
-                    stroke: color,
-                    "stroke-width": sw,
-                    opacity: opa
-                  }));
-                }
               }
             }
           }
-          const mmActive = maxMaxIsActive && !isMixed;
-          drawStaircase(
-            maxMaxSorted,
-            "#4872f9",
-            "rgba(72,114,249,0.06)",
-            mmActive ? 2.5 : 1.5,
-            mmActive ? "0.7" : "0.35",
-            plotT,
-            // extend UP
-            plotR,
-            // extend RIGHT
-            plotR,
-            plotT,
-            // corner: top-right
-            false
-          );
-          const mmInactive = !maxMaxIsActive && !isMixed;
-          drawStaircase(
-            minMinSorted,
-            "#e6a23c",
-            "rgba(230,162,60,0.06)",
-            mmInactive ? 2.5 : 1.5,
-            mmInactive ? "0.7" : "0.35",
-            plotB,
-            // extend DOWN
-            plotL,
-            // extend LEFT
-            plotL,
-            plotB,
-            // corner: bottom-left
-            true
-          );
-          const activeColor = isMixed ? "#4872f9" : maxMaxIsActive ? "#4872f9" : "#e6a23c";
-          for (const fi of sortedActive) {
+          for (const fi of sortedFrontier) {
             const p = points[fi];
             svg.append(
               svgEl("circle", {
@@ -8099,32 +8096,11 @@ var Ax;
                 cy: sy(p.y),
                 r: 8,
                 fill: "none",
-                stroke: activeColor,
+                stroke: "#4872f9",
                 "stroke-width": 1.5,
                 opacity: "0.5"
               })
             );
-          }
-        },
-        renderOverlay: (svg, sx, sy, bounds) => {
-          if (showStatusQuo && predictor.statusQuoPoint) {
-            const sq = predictor.statusQuoPoint;
-            const sqPred = predictor.predict([sq]);
-            const sqXVal = sqPred[xOutcome]?.mean[0];
-            const sqYVal = sqPred[yOutcome]?.mean[0];
-            if (sqXVal != null && sqYVal != null) {
-              const cx = sx(sqXVal);
-              const cy = sy(sqYVal);
-              svg.append(
-                svgEl("polygon", {
-                  points: `${cx},${cy - 7} ${cx + 7},${cy} ${cx},${cy + 7} ${cx - 7},${cy}`,
-                  fill: "#4872f9",
-                  stroke: "#fff",
-                  "stroke-width": 1.5,
-                  opacity: "0.8"
-                })
-              );
-            }
           }
         }
       },

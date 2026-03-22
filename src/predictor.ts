@@ -66,6 +66,8 @@ export class Predictor {
   readonly statusQuoPoint: Array<number> | null;
   /** Per-outcome optimization direction inferred from optimization_config. */
   readonly outcomeDirections: Record<string, "min" | "max">;
+  /** Per-outcome objective thresholds (reference point for hypervolume). */
+  readonly objectiveThresholds: Record<string, { bound: number; op: "LEQ" | "GEQ" }>;
   private readonly model: AnyModel;
   private readonly _state: ExperimentState;
   private readonly adapterUntransforms: Map<string, OutcomeUntransform> | null;
@@ -93,6 +95,13 @@ export class Predictor {
       }
     }
     this.outcomeDirections = dirs;
+    const thresholds: Record<string, { bound: number; op: "LEQ" | "GEQ" }> = {};
+    if (exported.optimization_config?.objective_thresholds) {
+      for (const t of exported.optimization_config.objective_thresholds) {
+        thresholds[t.name] = { bound: t.bound, op: t.op };
+      }
+    }
+    this.objectiveThresholds = thresholds;
     this.adapterUntransforms = buildAdapterUntransforms(
       exported.adapter_transforms,
       this.outcomeNames,

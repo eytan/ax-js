@@ -22,6 +22,8 @@ export interface RenderPredictor {
   readonly statusQuoPoint?: Array<number> | null;
   /** Per-outcome optimization direction from optimization_config. */
   readonly outcomeDirections?: Record<string, "min" | "max">;
+  /** Per-outcome objective thresholds (reference point for hypervolume). */
+  readonly objectiveThresholds?: Record<string, { bound: number; op: "LEQ" | "GEQ" }>;
   predict(
     points: Array<Array<number>>,
   ): Record<string, { mean: Float64Array; variance: Float64Array }>;
@@ -145,9 +147,9 @@ export interface ScatterPlotOptions {
 export interface ParetoPlotOptions {
   xOutcome?: string;
   yOutcome?: string;
+  /** Override directions (defaults to predictor.outcomeDirections). */
   directions?: Record<string, "min" | "max">;
   interactive?: boolean;
-  showStatusQuo?: boolean;
   width?: number;
   height?: number;
 }
