@@ -1,12 +1,12 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
 
 /**
- * Cockpit module — embeddable multi-panel experiment explorer.
+ * Explorer module — embeddable multi-panel experiment explorer.
  *
  * Provides both a full `renderCockpit()` for standalone use and
  * individual panel renderers for embedding into custom layouts.
  *
- * @module ax-js/viz/cockpit
+ * @module ax-js/viz/explorer
  */
 
 // ── Public types ──────────────────────────────────────────────────────────
@@ -45,5 +45,5 @@ export type { DeltoidOptions } from "./deltoid.js";
 export { renderSlidersPanel } from "./sliders.js";
 export type { SliderOptions, SliderImportance } from "./sliders.js";
 
-// ── Full cockpit orchestrator ─────────────────────────────────────────────
+// ── Full explorer orchestrator ────────────────────────────────────────────
 export { renderCockpit } from "./render.js";

@@ -125,7 +125,7 @@ Interactive demos are in the [demo/](demo/) directory. Clone the repo, run `npm 
 
 **Model Diagnostics** — Leave-one-out cross-validation, feature importance (lengthscale-based), and optimization trace with best-so-far tracking.
 
-**Multi-Objective** — Radar chart for constrained MOO and the [Ax Cockpit](docs/cockpit.md) for exploring many-objective tradeoffs with candidate editing.
+**Multi-Objective** — Radar chart for constrained MOO and the [Ax Explorer](docs/explorer.md) for exploring many-objective tradeoffs with candidate editing.
 
 **Bayesian Optimization Loop** — Live BO with Thompson sampling on test functions, and preferential BO (BOPE) with pairwise comparison learning.
 
@@ -181,7 +181,7 @@ npm test
 - [Data Model](docs/data-model.md) — ExperimentState schema and serialization format
 - [Testing Guide](docs/testing.md) — Fixture system and adding new tests
 - [Developer Guide](docs/developer-guide.md) — Architecture, transforms, and contributing
-- [Cockpit](docs/cockpit.md) — Multi-objective tradeoff exploration tool
+- [Explorer](docs/explorer.md) — Multi-objective tradeoff exploration tool
 - [Experimental](docs/experimental.md) — Acquisition functions (beta)
 
 Internal docs for contributors working on numerical details and BoTorch integration:

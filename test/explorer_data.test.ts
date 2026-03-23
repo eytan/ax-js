@@ -11,10 +11,10 @@ import {
   ciColors,
   batchColor,
   relativizeItem,
-} from "../src/viz/cockpit/data.js";
+} from "../src/viz/explorer/data.js";
 import type { MetricConfig, Observation } from "../src/models/types.js";
 
-describe("cockpit data layer", () => {
+describe("explorer data layer", () => {
   describe("inferBatchIndices", () => {
     it("groups by generation_method when batch_index absent", () => {
       const obs: Array<Observation> = [

@@ -1,4 +1,4 @@
-"""Cockpit fixture generator: standard model + multi-batch metadata overlay.
+"""Explorer fixture generator: standard model + multi-batch metadata overlay.
 
 Generates a fixture by:
 1. Using the standard ModelListGP generator (proven parity) for the model
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
     from generate_fixtures import FixtureSpec
 
 
-def generate_cockpit_fixture(spec: FixtureSpec, benchmarks: dict) -> dict:
-    """Generate cockpit fixture: standard model + observations/candidates metadata."""
+def generate_explorer_fixture(spec: FixtureSpec, benchmarks: dict) -> dict:
+    """Generate explorer fixture: standard model + observations/candidates metadata."""
     from generators.model_list import generate_model_list_fixture
 
     # Generate the base fixture using the standard ModelListGP pipeline
@@ -112,6 +112,6 @@ def generate_cockpit_fixture(spec: FixtureSpec, benchmarks: dict) -> dict:
     fixture["experiment"]["candidates"] = candidates
     fixture["experiment"]["optimization_config"] = opt_config
     fixture["experiment"]["status_quo"] = {"point": sq_point}
-    fixture["test"]["metadata"]["cockpit"] = True
+    fixture["test"]["metadata"]["explorer"] = True
 
     return fixture

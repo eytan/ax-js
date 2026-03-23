@@ -28,8 +28,8 @@ function categorize(filepath: string): string {
   if (filepath.includes("integration/relativize")) {
     return "Relativization";
   }
-  if (filepath.includes("integration/cockpit")) {
-    return "Cockpit Metadata";
+  if (filepath.includes("integration/explorer")) {
+    return "Explorer Metadata";
   }
   if (filepath.includes("api_smoke")) {
     return "API Smoke Tests";
@@ -151,7 +151,7 @@ export default class TestReportGenerator implements Reporter {
       "BoTorch Parity",
       "Ax-Level Parity",
       "Relativization",
-      "Cockpit Metadata",
+      "Explorer Metadata",
       "Predictor",
       "API Smoke Tests",
       "Kernels",

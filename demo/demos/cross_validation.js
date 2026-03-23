@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, penicillinFixture, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, penicillinFixture, axHomeLink, axFavicon , descriptionCSS, descriptionPanel } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -20,11 +20,21 @@ ${axFavicon}
     border-radius: 6px; border: 0.5px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; outline: none; }
   button:hover { background: #f0f0f0; }
   .hint { font-size: 11px; color: #999; margin-top: 8px; }
+${descriptionCSS}
 </style>
 </head>
 <body>
 <h1>${axHomeLink}Leave-One-Out Cross-Validation</h1>
 <div class="subtitle" id="subtitle">Observed vs predicted — load a fixture to begin</div>
+${descriptionPanel(`
+  <p>Each training point is predicted by a GP model trained on all <em>other</em> points. Observed values are plotted against these LOO predictions — points on the diagonal indicate good model fit.</p>
+  <p>Each point has a vertical error bar showing the GP's 95% confidence interval. Points far from the diagonal, or where the diagonal falls outside the CI, indicate regions where the model struggles. The R² value summarizes overall fit quality.</p>
+  <p><b>Interactivity:</b></p>
+  <ul>
+    <li><b>Outcome selector</b> — switch between objectives</li>
+    <li><b>Hover</b> — see the trial index and exact observed/predicted values</li>
+    <li><b>Click</b> — highlight kernel-distance neighbors</li>
+  </ul>`)}
 <div class="controls">
   <label>File: <input type="file" id="fileInput" accept=".json"></label>
 </div>

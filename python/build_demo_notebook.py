@@ -81,8 +81,15 @@ def build_notebook():
 
     nb.cells.append(new_markdown_cell(
         "# ax-js Jupyter Demo\n\n"
-        "Interactive GP diagnostics from a DTLZ2 multi-objective experiment (5D, 2 objectives, 30 trials).\n"
-        "Pre-populated outputs — no execution needed. Or re-run to see live results."
+        "This notebook demonstrates interactive GP (Gaussian Process) model diagnostics "
+        "for a **DTLZ2 multi-objective experiment** — a standard benchmark with 5 input "
+        "parameters and 2 objectives.\n\n"
+        "All plots are rendered client-side using [ax-js](https://github.com/eytan/ax-js), "
+        "a TypeScript library that runs BoTorch GP predictions directly in the browser. "
+        "The model hyperparameters are exported from Ax/BoTorch and loaded into a JavaScript "
+        "predictor — no Python server needed after export.\n\n"
+        "**Pre-populated outputs** — you can view results without re-running. Or execute "
+        "the cells to regenerate from scratch."
     ))
 
     # Experiment setup cell
@@ -123,39 +130,111 @@ def build_notebook():
         ")"
     ))
 
-    nb.cells.append(new_markdown_cell("## 1D Slice Plots"))
+    nb.cells.append(new_markdown_cell(
+        "## 1D Slice Plots\n\n"
+        "Each subplot shows the GP posterior prediction (mean ± confidence band) as a single "
+        "parameter varies, with all other parameters held fixed. This lets you see how each "
+        "input individually affects the selected outcome.\n\n"
+        "**How dimensions are chosen:** Parameters are sorted by *feature importance* "
+        "(derived from the GP kernel's lengthscales — shorter lengthscale = more important). "
+        "The most influential parameters appear first.\n\n"
+        "**Reading the plot:** The blue curve is the posterior mean prediction. The shaded band "
+        "shows the 95% confidence interval. Training points are shown as dots — hover over them "
+        "to highlight their nearest neighbors across all subplots.\n\n"
+        "**Interactivity:**\n"
+        "- **Outcome selector** — switch between objectives (f0, f1) to see how each parameter "
+        "affects different outcomes\n"
+        "- **Sliders** — adjust the \"held fixed\" values for other parameters and watch the "
+        "curves update in real time\n"
+        "- **Pivoting** — click anywhere on the mean curve to \"pivot\" to that point. This sets "
+        "the clicked parameter's value in all *other* subplots' sliders, so you can explore the "
+        "response surface from that operating point. For example, clicking at x1=0.7 on the x1 "
+        "subplot will fix x1=0.7 in all other subplots, showing you what the model predicts when "
+        "x1 is held at 0.7. Points that are more \"distant\" in terms of (relevant) inputs are "
+        "shown as more transparent. At a more technical level, opacity is proportional to the "
+        "correlation between the points under the given GP kernel lengthscales.\n"
+        "- **Training dots** — click a training point to snap all sliders to that trial's "
+        "parameter values, exploring the model's predictions at that observed configuration"
+    ))
     nb.cells.append(_viz_cell(
         "slice_plot(client)", state,
         'Ax.viz.renderSlicePlot(c,p,{interactive:true});',
         height="auto"))
 
-    nb.cells.append(new_markdown_cell("## 2D Response Surface"))
+    nb.cells.append(new_markdown_cell(
+        "## 2D Response Surface\n\n"
+        "A heatmap of the GP posterior mean over two input parameters, with all others held "
+        "fixed. This shows how pairs of parameters jointly influence the outcome — revealing "
+        "interactions that 1D slices can't capture.\n\n"
+        "**How dimensions are chosen:** The two most important parameters (by kernel lengthscale) "
+        "are selected by default. You can change them with the axis dropdowns.\n\n"
+        "**Reading the plot:** Color encodes the predicted outcome value (yellow = high, "
+        "purple = low). Training points are overlaid as dots. A second panel shows the posterior "
+        "standard deviation (model uncertainty) — brighter regions indicate where the model is "
+        "less certain, suggesting where additional trials would be most informative.\n\n"
+        "**Interactivity:**\n"
+        "- **Axis dropdowns** — choose which two parameters to plot\n"
+        "- **Outcome selector** — switch between objectives\n"
+        "- **Sliders** — adjust the held-fixed values for all non-plotted parameters"
+    ))
     nb.cells.append(_viz_cell(
         "response_surface(client)", state,
         'Ax.viz.renderResponseSurface(c,p,{interactive:true,width:800,height:380});',
         width="860px", height="500px"))
 
-    nb.cells.append(new_markdown_cell("## Feature Importance"))
+    nb.cells.append(new_markdown_cell(
+        "## Feature Importance\n\n"
+        "A bar chart ranking parameters by their influence on the selected outcome.\n\n"
+        "**How it works:** Importance is derived from Sobol sensitivity analysis on the GP model. "
+        "Each bar shows two components: the *first-order* effect (how much variance the parameter "
+        "explains on its own) and the *total-order* effect (including interactions with other "
+        "parameters). A large gap between them means the parameter's effect depends on the values "
+        "of other parameters. These importances are also embedded in the sliders of the Ax Explorer.\n\n"
+        "**Interactivity:**\n"
+        "- **Outcome selector** — switch between objectives to see which parameters matter most for each"
+    ))
     nb.cells.append(_viz_cell(
         "feature_importance(client)", state,
         'Ax.viz.renderFeatureImportance(c,p,{interactive:true});',
         width="500px", height="auto"))
 
-    nb.cells.append(new_markdown_cell("## Leave-One-Out Cross-Validation"))
+    nb.cells.append(new_markdown_cell(
+        "## Leave-One-Out Cross-Validation\n\n"
+        "Each training point is predicted by a GP model trained on all *other* points. Observed "
+        "values are plotted against these LOO predictions — points on the diagonal indicate good "
+        "model fit.\n\n"
+        "**Reading the plot:** Each point has a vertical error bar showing the GP's 95% confidence "
+        "interval for that prediction. Points far from the diagonal, or where the diagonal falls "
+        "outside the CI, indicate regions where the model struggles. The R² value summarizes "
+        "overall fit quality.\n\n"
+        "**Interactivity:**\n"
+        "- **Outcome selector** — switch between objectives\n"
+        "- **Hover** — see the trial index and exact observed/predicted values"
+    ))
     nb.cells.append(_viz_cell(
         "cross_validation(client)", state,
         'Ax.viz.renderCrossValidation(c,p,{interactive:true,width:460,height:460});',
         width="500px", height="500px"))
 
-    nb.cells.append(new_markdown_cell("## Optimization Trace"))
+    nb.cells.append(new_markdown_cell(
+        "## Optimization Trace\n\n"
+        "The observed outcome value at each trial, with a running \"best so far\" line showing "
+        "optimization progress.\n\n"
+        "**Reading the plot:** Each dot is one trial's observed value. The step line tracks the "
+        "best value seen up to that trial. For multi-objective problems, \"best\" is determined "
+        "per-outcome using the direction inferred from the optimization config (maximize or minimize).\n\n"
+        "**Interactivity:**\n"
+        "- **Outcome selector** — switch between objectives to see convergence for each"
+    ))
     nb.cells.append(_viz_cell(
         "optimization_trace(client)", state,
         'Ax.viz.renderOptimizationTrace(c,p,{interactive:true,width:660,height:380});',
         width="700px", height="420px"))
 
     nb.cells.append(new_markdown_cell(
-        "---\nFive one-liners from Ax Client to interactive plots. "
-        "5D DTLZ2 MOO exercises outcome selectors, sliders, importance rankings, and axis selectors."))
+        "---\nFive one-liners from `ax.api.Client` to interactive GP diagnostics. All rendering "
+        "happens in the browser via ax-js — the GP posterior is evaluated in JavaScript using "
+        "exported hyperparameters, so plots update instantly without round-trips to Python."))
 
     return nb
 

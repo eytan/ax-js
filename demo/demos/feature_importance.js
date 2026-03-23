@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, penicillinFixture, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, penicillinFixture, axHomeLink, axFavicon , descriptionCSS, descriptionPanel } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -19,11 +19,16 @@ ${axFavicon}
   select, input[type=file] { font-size: 13px; padding: 5px 10px;
     border-radius: 6px; border: 0.5px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; outline: none; }
   .explanation { font-size: 12px; color: #666; margin-top: 16px; max-width: 600px; line-height: 1.5; }
+${descriptionCSS}
 </style>
 </head>
 <body>
 <h1>${axHomeLink}Feature Importance</h1>
 <div class="subtitle" id="subtitle">Parameter importance via GP kernel analysis</div>
+${descriptionPanel(`
+  <p>A bar chart ranking parameters by their influence on the selected outcome. Importance is derived from <b>Sobol sensitivity analysis</b> on the GP model.</p>
+  <p>Each bar shows two components: the <b>first-order</b> effect (how much variance the parameter explains on its own) and the <b>total-order</b> effect (including interactions with other parameters). A large gap between them means the parameter's effect depends on the values of other parameters.</p>
+  <p>These importances are also embedded in the sliders of the Ax Explorer.</p>`)}
 <div class="controls">
   <label>File: <input type="file" id="fileInput" accept=".json"></label>
 </div>

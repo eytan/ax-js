@@ -388,8 +388,8 @@
         }
       ]
     },
-    "name": "cockpit_c2dtlz2",
-    "description": "Cockpit: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates",
+    "name": "explorer_c2dtlz2",
+    "description": "Explorer: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates",
     "outcome_names": [
       "f0",
       "f1",
@@ -840,7 +840,7 @@
       "generated_at": "2026-03-20T21:21:06.170640+00:00",
       "seed": 200,
       "benchmark": "C2DTLZ2",
-      "cockpit": true
+      "explorer": true
     },
     "test_points": [
       [

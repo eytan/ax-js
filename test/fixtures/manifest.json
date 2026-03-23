@@ -161,14 +161,14 @@
       "description": "C2DTLZ2: 4D, 2 objectives + 1 constraint, constrained MOO"
     },
     {
-      "name": "cockpit_c2dtlz2",
-      "file": "cockpit_c2dtlz2.json",
-      "description": "Cockpit: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates"
+      "name": "explorer_c2dtlz2",
+      "file": "explorer_c2dtlz2.json",
+      "description": "Explorer: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates"
     },
     {
-      "name": "cockpit_vsip",
-      "file": "cockpit_vsip.json",
-      "description": "Cockpit: VSIP 9-outcome MOO, 12 Sobol + 8 qEHVI + 5 candidates"
+      "name": "explorer_vsip",
+      "file": "explorer_vsip.json",
+      "description": "Explorer: VSIP 9-outcome MOO, 12 Sobol + 8 qEHVI + 5 candidates"
     },
     {
       "name": "discbrake_constrained_moo",

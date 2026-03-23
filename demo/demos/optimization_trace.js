@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, penicillinFixture, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, penicillinFixture, axHomeLink, axFavicon , descriptionCSS, descriptionPanel } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -18,11 +18,19 @@ ${axFavicon}
   label { font-size: 13px; color: #555; }
   select, input[type=file] { font-size: 13px; padding: 5px 10px;
     border-radius: 6px; border: 0.5px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; outline: none; }
+${descriptionCSS}
 </style>
 </head>
 <body>
 <h1>${axHomeLink}Optimization Trace</h1>
 <div class="subtitle" id="subtitle">Trial progression — load a fixture with observations</div>
+${descriptionPanel(`
+  <p>The observed outcome value at each trial, with a running "best so far" line showing optimization progress.</p>
+  <p>Each dot is one trial's observed value. The step line tracks the best value seen up to that trial. For multi-objective problems, "best" is determined per-outcome using the direction inferred from the optimization config (maximize or minimize).</p>
+  <p><b>Interactivity:</b></p>
+  <ul>
+    <li><b>Outcome selector</b> — switch between objectives to see convergence for each</li>
+  </ul>`)}
 <div class="controls">
   <label>File: <input type="file" id="fileInput" accept=".json"></label>
 </div>

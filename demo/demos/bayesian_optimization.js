@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, axHomeLink, axFavicon , descriptionCSS, descriptionPanel } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -65,6 +65,7 @@ ${axFavicon}
   }
   #tooltip .tt-val { color: #ff6b6b; font-weight: 500; }
   #tooltip .tt-coord { color: #a0c4ff; }
+${descriptionCSS}
 </style>
 </head>
 <body>
@@ -72,6 +73,15 @@ ${axFavicon}
 <h1>${axHomeLink}Bayesian Optimization</h1>
 <p class="subtitle">Thompson Sampling (2D) - ScaleKernel(RBF) - GP fitted via MAP</p>
 
+${descriptionPanel(`
+  <p>A live Bayesian optimization loop on 2D test functions. Each iteration: the GP model fits to all observations so far, the acquisition function (Thompson Sampling) identifies the most promising point, and a new trial is evaluated.</p>
+  <p><b>What you see:</b></p>
+  <ul>
+    <li><b>Left panel</b> — the true objective function (ground truth). Observed points appear as dots.</li>
+    <li><b>Center panel</b> — the GP posterior mean (what the model thinks the function looks like).</li>
+    <li><b>Right panel</b> — the acquisition function value, showing where the optimizer wants to sample next.</li>
+  </ul>
+  <p><b>Interactivity:</b> Choose a test function from the dropdown, then click <b>Iterate</b> to step through the loop one trial at a time, or <b>Auto</b> to run continuously.</p>`, { summary: 'About this demo' })}
 <div class="controls">
   <select id="selProblem">
     <option value="branin" selected>Branin</option>

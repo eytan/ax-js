@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, axHomeLink, axFavicon , descriptionCSS, descriptionPanel } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -107,6 +107,7 @@ ${axFavicon}
     line-height: 1.8; white-space: nowrap;
     box-shadow: 0 4px 16px rgba(0,0,0,0.1);
   }
+${descriptionCSS}
 </style>
 </head>
 <body>
@@ -114,6 +115,10 @@ ${axFavicon}
 <h1>${axHomeLink}Preferential Bayesian Optimization</h1>
 <p class="subtitle">Pick whichever pattern you find more beautiful — the model learns your aesthetic preferences in 4D</p>
 
+${descriptionPanel(`
+  <p>Instead of observing a numeric outcome, you simply choose which of two options you prefer. The model learns a latent utility function from these pairwise comparisons and suggests increasingly better options.</p>
+  <p><b>How it works:</b> A Pairwise GP models your preferences using Laplace approximation. The EUBO (Expected Utility of Best Option) acquisition function picks the next pair to show you — the pair most likely to reveal new information about what you like.</p>
+  <p><b>Interactivity:</b> Click the pattern you prefer. After a few rounds, the model converges on your taste. Switch to <b>Auto Mode</b> to let a simulated user make choices, or try different visual styles from the dropdown.</p>`, { summary: 'About this demo' })}
 <div class="controls">
   <select id="selMode">
     <option value="human" selected>Human Mode</option>

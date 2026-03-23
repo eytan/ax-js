@@ -79,7 +79,7 @@ npm run build               # Build library + demos
 - `python/axjs_export.py` — User-facing export (imports from _extraction.py), returns `ExperimentState`
 - `python/generate_fixtures.py` — Benchmark fixture generation (imports from _extraction.py)
 - `test/fixtures/` — 51 JSON fixtures. See `docs/testing.md`
-- `demo/` — 10 self-contained HTML demos (scatter plots, cockpit, response surface, slice, etc.)
+- `demo/` — 10 self-contained HTML demos (scatter plots, explorer, response surface, slice, etc.)
 
 ## Serialization Format
 

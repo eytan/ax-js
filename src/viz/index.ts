@@ -107,5 +107,8 @@ export type { ObservedPredictedController } from "./plots/observed_predicted";
 export { renderEffectsPlot } from "./plots/effects";
 export type { EffectsPlotController } from "./plots/effects";
 
-// ── Cockpit (multi-panel experiment explorer) ─────────────────────────────
-export * as cockpit from "./cockpit/index";
+// ── Explorer (multi-panel experiment explorer) ────────────────────────────
+import * as _explorer from "./explorer/index";
+export { _explorer as explorer };
+/** @deprecated Use `explorer` instead. */
+export { _explorer as cockpit };

@@ -305,7 +305,7 @@ is the only file that needs updating.
 | Fixture generator | `python/generate_fixtures.py` |
 | Data model schema | `docs/data-model.md` |
 | Testing guide | `docs/testing.md` |
-| Cockpit (MOO tool) | `docs/cockpit.md` |
+| Explorer (MOO tool) | `docs/explorer.md` |
 | Codebase observations | `plans/codebase-observations.md` |
 | Internal: numerics | `docs/internal/numerics.md` |
 | Upstream proposals | `plans/upstream-proposals.md` |

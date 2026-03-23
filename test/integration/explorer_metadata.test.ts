@@ -1,10 +1,10 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
 
 /**
- * Cockpit metadata plumbing tests.
+ * Explorer metadata plumbing tests.
  *
- * Verifies that observations, candidates, and optimization_config from a
- * cockpit fixture are correctly loaded and accessible through Predictor.
+ * Verifies that observations, candidates, and optimization_config from an
+ * explorer fixture are correctly loaded and accessible through Predictor.
  * Also verifies prediction parity at observation and candidate locations.
  */
 import { readFileSync } from "node:fs";
@@ -41,8 +41,8 @@ function expectAllClose(
   }
 }
 
-describe("cockpit fixture metadata", () => {
-  const fixture = loadFixture("cockpit_c2dtlz2.json");
+describe("explorer fixture metadata", () => {
+  const fixture = loadFixture("explorer_c2dtlz2.json");
   const exp = fixture.experiment;
 
   it("has observations with correct counts and batches", () => {

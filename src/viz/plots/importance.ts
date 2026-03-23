@@ -21,7 +21,7 @@ const SEG_BTN_ACTIVE =
   "padding:3px 10px;cursor:pointer;border:none;outline:none;background:#4872f9;color:#fff";
 
 // PiYG-derived sign colors for Sobol' importance bars.
-// Must match SIGN_COLORS in demo/demos/ax_cockpit.js.
+// Must match SIGN_COLORS in the explorer slider panel.
 // Currently designed to echo the deltoid palette; may be revisited.
 const SOBOL_COLORS = {
   pos: { first: "#7fbc41", interaction: "#b8e186" }, // green = positive effect

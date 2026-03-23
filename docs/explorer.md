@@ -1,10 +1,10 @@
-# Ax Cockpit
+# Ax Explorer
 
-The Ax Cockpit is a multi-objective tradeoff exploration tool for Ax experiments. It visualizes predicted outcomes across all arms and candidates on a scatter plot, with a deltoid panel showing per-metric performance relative to the status quo.
+The Ax Explorer is a multi-objective tradeoff exploration tool for Ax experiments. It visualizes predicted outcomes across all arms and candidates on a scatter plot, with a deltoid panel showing per-metric performance relative to the status quo.
 
 ## Overview
 
-The Cockpit is designed for experiments with an `optimization_config` — multiple objectives, outcome constraints, and objective thresholds. It lets you:
+The Explorer is designed for experiments with an `optimization_config` — multiple objectives, outcome constraints, and objective thresholds. It lets you:
 
 - **Explore tradeoffs** on a 2D scatter plot (choose any two metrics as axes)
 - **Inspect arms** via a deltoid panel showing relativized metric bars (PiYG color scale: green = better, pink = worse)
@@ -13,7 +13,7 @@ The Cockpit is designed for experiments with an `optimization_config` — multip
 
 ## Exporting from Ax
 
-Use `export_client()` from `axjs_export.py` to produce the `ExperimentState` JSON that the Cockpit consumes:
+Use `export_client()` from `axjs_export.py` to produce the `ExperimentState` JSON that the Explorer consumes:
 
 ```python
 import sys, json
@@ -25,11 +25,11 @@ from axjs_export import export_client
 # After running your multi-objective experiment...
 state = export_client(client)
 
-with open("cockpit_data.json", "w") as f:
+with open("explorer_data.json", "w") as f:
     json.dump(state, f)
 ```
 
-The Cockpit requires these fields in the `ExperimentState`:
+The Explorer requires these fields in the `ExperimentState`:
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -43,7 +43,7 @@ The Cockpit requires these fields in the `ExperimentState`:
 
 ### Optimization config structure
 
-The `optimization_config` tells the Cockpit which metrics are objectives vs. constraints:
+The `optimization_config` tells the Explorer which metrics are objectives vs. constraints:
 
 ```json
 {
@@ -65,7 +65,7 @@ The `optimization_config` tells the Cockpit which metrics are objectives vs. con
 
 ### Export
 
-Click **export** in the Cockpit toolbar to download `candidates.json`:
+Click **export** in the Explorer toolbar to download `candidates.json`:
 
 ```json
 [
@@ -101,7 +101,7 @@ The right-side panel shows per-metric performance bars for the selected arm or c
 
 ## Customization
 
-The Cockpit reads the full `ExperimentState` format documented in [data-model.md](data-model.md). To customize:
+The Explorer reads the full `ExperimentState` format documented in [data-model.md](data-model.md). To customize:
 
 - **Axis defaults**: The scatter plot defaults to the first two objectives
 - **Relative vs. absolute**: Toggle relativization via the checkbox (requires `status_quo`)

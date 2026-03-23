@@ -16,11 +16,25 @@
   select, input[type=file] { font-size: 13px; padding: 5px 10px;
     border-radius: 6px; border: 0.5px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; outline: none; }
   .explanation { font-size: 12px; color: #666; margin-top: 16px; max-width: 600px; line-height: 1.5; }
+
+  details.description { font-size: 13px; color: #555; line-height: 1.6; max-width: 720px; margin-bottom: 16px; }
+  details.description summary { cursor: pointer; color: #888; font-size: 12px; }
+  details.description p { margin: 8px 0; }
+  details.description ul { margin: 4px 0 4px 20px; }
+  details.description li { margin: 3px 0; }
+  details.description b { color: #333; }
 </style>
 </head>
 <body>
 <h1><a href="index.html" style="text-decoration:none"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="24" height="24" style="vertical-align:middle;margin-right:8px;margin-top:-2px;opacity:0.7"><path fill="#222" d="M761.76,600h0l200-346.16H550.12l-400,692.32H961.76ZM573.41,274H926.82L750.12,579.85ZM550.12,926H185.06L555.94,284.07,738.47,600Zm23.29,0L750.12,620.15,926.82,926Z"/></svg></a>Feature Importance</h1>
 <div class="subtitle" id="subtitle">Parameter importance via GP kernel analysis</div>
+<details class="description" open>
+  <summary>About this plot</summary>
+  
+  <p>A bar chart ranking parameters by their influence on the selected outcome. Importance is derived from <b>Sobol sensitivity analysis</b> on the GP model.</p>
+  <p>Each bar shows two components: the <b>first-order</b> effect (how much variance the parameter explains on its own) and the <b>total-order</b> effect (including interactions with other parameters). A large gap between them means the parameter's effect depends on the values of other parameters.</p>
+  <p>These importances are also embedded in the sliders of the Ax Explorer.</p>
+</details>
 <div class="controls">
   <label>File: <input type="file" id="fileInput" accept=".json"></label>
 </div>
@@ -6366,7 +6380,7 @@ var Ax;
     attachDotInteractivity: () => attachDotInteractivity,
     buildPointTooltipHtml: () => buildPointTooltipHtml,
     clearDotHighlight: () => clearDotHighlight,
-    cockpit: () => cockpit_exports,
+    cockpit: () => explorer_exports,
     computeDimOrder: () => computeDimOrder,
     computeKernelRels: () => computeKernelRels,
     computeKernelRelsFromPoint: () => computeKernelRelsFromPoint,
@@ -6379,6 +6393,7 @@ var Ax;
     drawColorbar: () => drawColorbar,
     drawDataDot: () => drawDataDot,
     estimateRange: () => estimateRange,
+    explorer: () => explorer_exports,
     findNearestDot: () => findNearestDot,
     formatParamValue: () => formatParamValue,
     formatPct: () => formatPct,
@@ -11347,9 +11362,9 @@ var Ax;
     }
   }
 
-  // src/viz/cockpit/index.ts
-  var cockpit_exports = {};
-  __export(cockpit_exports, {
+  // src/viz/explorer/index.ts
+  var explorer_exports = {};
+  __export(explorer_exports, {
     CI_Z: () => CI_Z,
     batchColor: () => batchColor,
     ciColors: () => ciColors,
@@ -11373,7 +11388,7 @@ var Ax;
     updateScatterOpacities: () => updateScatterOpacities
   });
 
-  // src/viz/cockpit/data.ts
+  // src/viz/explorer/data.ts
   function prepareExperimentState(rawData) {
     const d = normalizeExperimentData(rawData);
     const state = d;
@@ -11776,7 +11791,7 @@ var Ax;
     return Array.from(signs).map((s) => s >= 0 ? 1 : -1);
   }
 
-  // src/viz/cockpit/scatter.ts
+  // src/viz/explorer/scatter.ts
   function renderScatterSvg(svg, arms, candidates, outcomeNames, options) {
     const W = options.width ?? 420;
     const H = options.height ?? 400;
@@ -12005,7 +12020,7 @@ var Ax;
     }
   }
 
-  // src/viz/cockpit/deltoid.ts
+  // src/viz/explorer/deltoid.ts
   function getItemLabel(item, arms, candidates, sqIdx) {
     if (item.type === "candidate") {
       const cand = candidates[item.idx];
@@ -12076,9 +12091,11 @@ var Ax;
     const lo = options.panelRange.lo, hi = options.panelRange.hi;
     const bx = (v) => handleW + labelW + pad + (v - lo) / (hi - lo) * barW;
     let s = `<svg width="${totalW}" height="${totalH}" xmlns="http://www.w3.org/2000/svg">`;
-    sortedNames.forEach((_, k) => {
-      if (k % 2 === 1) {
-        const stripY = k * rowH + topPad;
+    sortedNames.forEach((name, k) => {
+      const stripY = k * rowH + topPad;
+      if (options.sliderOutcome === name) {
+        s += `<rect x="0" y="${stripY}" width="${totalW}" height="${rowH}" fill="rgba(72,114,249,0.12)"/>`;
+      } else if (k % 2 === 1) {
         s += `<rect x="0" y="${stripY}" width="${totalW}" height="${rowH}" fill="#f7f7f7"/>`;
       }
     });
@@ -12118,6 +12135,7 @@ var Ax;
       }
       s += "</g>";
       s += `<g data-outcome="${name}">`;
+      s += `<rect x="${handleW}" y="${cy - rowH / 2}" width="${totalW - handleW}" height="${rowH}" fill="transparent"/>`;
       let violated = false;
       let violatedBound = null;
       let violatedOp = null;
@@ -12152,10 +12170,10 @@ var Ax;
       }
       const xBadgeX = handleW + 2;
       const yBadgeX = handleW + 18;
-      const isX = name === options.xOutcome;
-      const isY = name === options.yOutcome;
+      const isX = options.xOutcome ? name === options.xOutcome : false;
+      const isY = options.yOutcome ? name === options.yOutcome : false;
       const metricType = isObj ? "Objective" : constraint ? "Constraint" : "Tracking metric";
-      s += `<text data-tip="${metricType}" x="${handleW + labelW - 4}" y="${cy + 4}" text-anchor="end" fill="${labelColor}" font-size="11" font-family="sans-serif"${isActiveOutcome ? ' font-weight="600"' : ""}>${labelText}</text>`;
+      s += `<text data-tip="${metricType}" x="${handleW + labelW - 4}" y="${cy + 4}" text-anchor="end" fill="${labelColor}" font-size="11" font-family="sans-serif" style="cursor:pointer"${isActiveOutcome ? ' font-weight="600"' : ""}>${labelText}</text>`;
       if (r) {
         const desiredSign = outcomeDesiredSign(name, options.metricConfigs);
         let cols = ciColors(r.mean, r.sem, desiredSign);
@@ -12210,24 +12228,27 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         const valStr = `${r.mean.toFixed(2)}\xB1${(1.96 * r.sem).toFixed(2)}%`;
         s += `<text x="${handleW + labelW + pad + barW + pad * 2}" y="${cy + 4}" fill="${violated ? "#c66" : "#777"}" font-size="10" font-family="sans-serif">${valStr}</text>`;
         if (violated) {
-          s += `<text x="${handleW + labelW + pad + barW + pad * 2 + valW - 8}" y="${cy + 5}" fill="#d32f2f" font-size="13" font-weight="700" font-family="sans-serif">\u26A0</text>`;
+          s += `<text x="${handleW + labelW + pad + barW + pad * 2 + valW - 21}" y="${cy + 5}" fill="#d32f2f" font-size="13" font-weight="700" font-family="sans-serif">\u26A0</text>`;
         }
       } else {
         s += `<text x="${handleW + labelW + pad + barW / 2}" y="${cy + 4}" text-anchor="middle" fill="#999" font-size="10" font-style="italic" font-family="sans-serif">N/A</text>`;
       }
-      s += `<g class="axis-badges" data-badges-row="${name}">`;
-      s += `<rect data-badge-x="${name}" x="${xBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isX ? "#4872f9" : "#c0c0c0"}" opacity="${isX ? "1" : "0"}" data-tip="${isX ? "X axis (click for importance)" : "Set as X axis"}" style="cursor:pointer"/>`;
-      s += `<text x="${xBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${isX ? "1" : "0"}">X</text>`;
-      s += `<rect data-badge-y="${name}" x="${yBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isY ? "#4872f9" : "#c0c0c0"}" opacity="${isY ? "1" : "0"}" data-tip="${isY ? "Y axis (click for importance)" : "Set as Y axis"}" style="cursor:pointer"/>`;
-      s += `<text x="${yBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${isY ? "1" : "0"}">Y</text>`;
-      s += "</g>";
+      if (options.xOutcome || options.yOutcome) {
+        const persist = isX || isY;
+        s += `<g class="axis-badges" data-badges-row="${name}">`;
+        s += `<rect data-badge-x="${name}" x="${xBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isX ? "#4872f9" : "#c0c0c0"}" opacity="${persist ? "1" : "0"}" pointer-events="${persist ? "auto" : "none"}"${persist ? " data-persist" : ""} data-tip="${isX ? "X axis (click for importance)" : "Set as X axis"}" style="cursor:pointer"/>`;
+        s += `<text x="${xBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${persist ? "1" : "0"}">X</text>`;
+        s += `<rect data-badge-y="${name}" x="${yBadgeX}" y="${cy - 6}" width="14" height="12" rx="2" fill="${isY ? "#4872f9" : "#c0c0c0"}" opacity="${persist ? "1" : "0"}" pointer-events="${persist ? "auto" : "none"}"${persist ? " data-persist" : ""} data-tip="${isY ? "Y axis (click for importance)" : "Set as Y axis"}" style="cursor:pointer"/>`;
+        s += `<text x="${yBadgeX + 7}" y="${cy + 3}" text-anchor="middle" fill="#fff" font-size="8" font-weight="700" font-family="sans-serif" pointer-events="none" opacity="${persist ? "1" : "0"}">Y</text>`;
+        s += "</g>";
+      }
       s += "</g>";
     });
     s += "</svg>";
     container.innerHTML = s;
   }
 
-  // src/viz/cockpit/sliders.ts
+  // src/viz/explorer/sliders.ts
   var SIGN_COLORS = {
     pos: { first: "#7fbc41", interaction: "#b8e186" },
     neg: { first: "#c51b7d", interaction: "#de77ae" }
@@ -12317,7 +12338,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
     }
   }
 
-  // src/viz/cockpit/render.ts
+  // src/viz/explorer/render.ts
   var COCKPIT_CSS = `
 .axjs-cockpit *, .axjs-cockpit *::before, .axjs-cockpit *::after { box-sizing: border-box; }
 .axjs-cockpit {
@@ -12399,15 +12420,15 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
 }
 .axjs-cockpit .delete-btn:hover { background: #ffe0e0; color: #a44; }
 .axjs-cockpit .param-row {
-  display: flex; align-items: center; gap: 6px; margin-bottom: 5px;
+  display: flex; align-items: center; gap: 6px; margin-bottom: 7px;
 }
 .axjs-cockpit .param-row label {
-  font-size: 10px; color: #666; width: 100px; text-align: right; flex-shrink: 0;
+  font-size: 10px; color: #333; width: 100px; text-align: right; flex-shrink: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  position: relative; z-index: 1;
+  position: relative; z-index: 1; padding: 3px 4px 3px 0;
 }
 .axjs-cockpit .param-row .imp-bar {
-  position: absolute; right: 0; top: 1px; bottom: 1px; border-radius: 2px; z-index: -1;
+  position: absolute; right: 0; top: 0; bottom: 0; border-radius: 2px; z-index: -1;
 }
 .axjs-cockpit .param-row input[type=range] {
   flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
@@ -12456,7 +12477,6 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
       tooltip.style.display = "none";
     });
   }
-  var COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
   function buildDom(container) {
     container.innerHTML = "";
     container.classList.add("axjs-cockpit");
@@ -12483,14 +12503,10 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
     btnNext.className = "ck-nav-btn";
     btnNext.innerHTML = "&#9654;";
     btnNext.title = "Next arm";
-    const rpActions = document.createElement("div");
-    rpActions.className = "ck-rp-actions";
-    const btnCopy = document.createElement("button");
-    btnCopy.className = "ck-icon-btn";
-    btnCopy.title = "Copy as text";
-    btnCopy.innerHTML = COPY_ICON;
-    rpActions.appendChild(btnCopy);
-    rpHeader.append(btnPrev, rpTitle, btnNext, rpActions);
+    const navGroup = document.createElement("div");
+    navGroup.style.cssText = "display:flex;gap:0;flex-shrink:0";
+    navGroup.append(btnPrev, btnNext);
+    rpHeader.append(navGroup, rpTitle);
     const rpBars = document.createElement("div");
     rpBars.className = "ck-bars";
     const rpSliders = document.createElement("div");
@@ -12572,7 +12588,6 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
       selDistMode,
       fileInput,
       btnExport,
-      btnCopy,
       btnPrev,
       btnNext
     };
@@ -12751,8 +12766,10 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         svg.querySelectorAll(`[${attr}]`).forEach((rect) => {
           const name = rect.getAttribute(attr);
           const isActive = rect.getAttribute("fill") === "#4872f9";
-          const show = isActive || name === rowName;
+          const persist = rect.hasAttribute("data-persist");
+          const show = isActive || persist || name === rowName;
           rect.setAttribute("opacity", show ? "1" : "0");
+          rect.setAttribute("pointer-events", show ? "auto" : "none");
           const text = rect.nextElementSibling;
           if (text) text.setAttribute("opacity", show ? "1" : "0");
         });
@@ -12986,6 +13003,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
     });
     dom.rpBars.addEventListener("click", (e) => {
       let el = e.target;
+      let outcome = null;
       while (el && el !== dom.rpBars) {
         const badgeX = el.getAttribute?.("data-badge-x");
         const badgeY = el.getAttribute?.("data-badge-y");
@@ -13001,12 +13019,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
               showDeltoid();
             } else {
               if (metricIdx === yOutIdx) {
-                for (let i = 0; i < data.outcomeNames.length; i++) {
-                  if (i !== metricIdx) {
-                    yOutIdx = i;
-                    break;
-                  }
-                }
+                yOutIdx = xOutIdx;
                 dom.selY.value = String(yOutIdx);
               }
               xOutIdx = metricIdx;
@@ -13025,12 +13038,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
               showDeltoid();
             } else {
               if (metricIdx === xOutIdx) {
-                for (let i = 0; i < data.outcomeNames.length; i++) {
-                  if (i !== metricIdx) {
-                    xOutIdx = i;
-                    break;
-                  }
-                }
+                xOutIdx = yOutIdx;
                 dom.selX.value = String(xOutIdx);
               }
               yOutIdx = metricIdx;
@@ -13044,14 +13052,24 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
           }
           return;
         }
+        if (!outcome) {
+          const oc = el.getAttribute?.("data-outcome");
+          if (oc) outcome = oc;
+        }
         el = el.parentNode;
+      }
+      if (outcome && sliderOutcome !== outcome) {
+        sliderOutcome = outcome;
+        sliderDimOrder = computeDimOrder2(outcome);
+        renderSliders();
+        showDeltoid();
       }
     });
     dom.rpBars.addEventListener("mouseover", (e) => {
       let el = e.target;
       let rowName = null;
       while (el && el !== dom.rpBars) {
-        const attr = el.getAttribute?.("data-badges-row") ?? el.getAttribute?.("data-outcome") ?? el.getAttribute?.("data-drag-handle");
+        const attr = el.getAttribute?.("data-badges-row") ?? el.getAttribute?.("data-outcome");
         if (attr) {
           rowName = attr;
           break;
@@ -13081,7 +13099,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         if (!svgEl2) return -1;
         const rect = svgEl2.getBoundingClientRect();
         const localY = e.clientY - rect.top - TOP_PAD;
-        return Math.max(0, Math.min(customMetricOrder.length - 1, Math.round(localY / ROW_H)));
+        return Math.max(0, Math.min(customMetricOrder.length - 1, Math.floor(localY / ROW_H)));
       }, updateIndicator2 = function(targetIdx) {
         const svgEl2 = dom.rpBars.querySelector("svg");
         if (!svgEl2) return;
@@ -13113,7 +13131,9 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
       let dragOrigIdx = -1;
       let lastTargetIdx = -1;
       let ghostEl = null;
+      let dragStartY = -1;
       const ROW_H = 30, TOP_PAD = 20;
+      const DRAG_THRESHOLD = 5;
       dom.rpBars.addEventListener("pointerdown", (e) => {
         const name = findDragHandle2(e.target);
         if (!name) return;
@@ -13121,6 +13141,7 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         dragName = name;
         dragOrigIdx = customMetricOrder.indexOf(name);
         lastTargetIdx = dragOrigIdx;
+        dragStartY = e.clientY;
         dom.rpBars.setPointerCapture(e.pointerId);
         dom.rpBars.style.cursor = "grabbing";
         styleSource2(name, true);
@@ -13152,10 +13173,12 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
           ghostEl.remove();
           ghostEl = null;
         }
+        const moved = Math.abs(e.clientY - dragStartY) > DRAG_THRESHOLD;
         const targetIdx = getTargetIdx2(e);
-        if (targetIdx >= 0 && targetIdx !== dragOrigIdx) {
+        if (moved && targetIdx >= 0 && targetIdx !== dragOrigIdx) {
           customMetricOrder.splice(dragOrigIdx, 1);
-          customMetricOrder.splice(targetIdx, 0, dragName);
+          const insertIdx = targetIdx > dragOrigIdx ? targetIdx - 1 : targetIdx;
+          customMetricOrder.splice(insertIdx, 0, dragName);
           showDeltoid();
         } else {
           styleSource2(dragName, false);
@@ -13185,8 +13208,11 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         yOutIdx = (xOutIdx + 1) % data.outcomeNames.length;
         dom.selY.value = String(yOutIdx);
       }
+      sliderOutcome = data.outcomeNames[xOutIdx] ?? null;
+      sliderDimOrder = sliderOutcome ? computeDimOrder2(sliderOutcome) : null;
       renderScatter2();
       showDeltoid();
+      renderSliders();
     });
     dom.selY.addEventListener("change", () => {
       yOutIdx = +dom.selY.value;
@@ -13194,8 +13220,11 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
         xOutIdx = (yOutIdx + 1) % data.outcomeNames.length;
         dom.selX.value = String(xOutIdx);
       }
+      sliderOutcome = data.outcomeNames[yOutIdx] ?? null;
+      sliderDimOrder = sliderOutcome ? computeDimOrder2(sliderOutcome) : null;
       renderScatter2();
       showDeltoid();
+      renderSliders();
     });
     dom.selSQ.addEventListener("change", () => {
       if (!data) return;
@@ -13240,22 +13269,6 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
       });
       dom.fileInput.value = "";
     });
-    dom.btnCopy.addEventListener("click", () => {
-      if (!data) return;
-      const item = selectedItem ?? hoveredItem;
-      if (!item) return;
-      const rd = item.type === "candidate" ? data.candidates[item.idx]?.relData : data.arms[item.idx]?.relData;
-      if (!rd) return;
-      const label = getItemLabel(item, data.arms, data.candidates, data.sqIdx);
-      const lines = [label, ""];
-      customMetricOrder.forEach((name) => {
-        const r = rd[name];
-        const txt = name + " " + (r ? `${r.mean >= 0 ? "+" : ""}${r.mean.toFixed(2)}% \xB1 ${(r.sem * 1.96).toFixed(2)}%` : "n/a");
-        lines.push(txt);
-      });
-      void navigator.clipboard?.writeText(lines.join("\n").trim()).catch(() => {
-      });
-    });
     attachTooltip(dom.rpBars, tooltip);
     attachTooltip(dom.rpSliders, tooltip);
     attachTooltip(dom.scatterSvg, tooltip);
@@ -13271,9 +13284,9 @@ Falls ${violatedOp === "LEQ" ? "above" : "below"} constraint threshold ${violate
       selectedItem = data.arms.length > 0 ? { type: "arm", idx: 0 } : null;
       prevSelectedItem = null;
       hoveredItem = null;
-      sliderOutcome = data.outcomeNames[0] ?? null;
-      sliderDimOrder = sliderOutcome ? computeDimOrder2(sliderOutcome) : null;
       populateDropdowns();
+      sliderOutcome = data.outcomeNames[xOutIdx] ?? null;
+      sliderDimOrder = sliderOutcome ? computeDimOrder2(sliderOutcome) : null;
       renderLegend();
       updateSubtitle();
       renderScatter2();

@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, hartmannMixedFixture, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, hartmannMixedFixture, axHomeLink, axFavicon , descriptionCSS, descriptionPanel } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -18,11 +18,23 @@ ${axFavicon}
   label { font-size: 13px; color: #555; }
   select, input[type=file] { font-size: 13px; padding: 5px 10px;
     border-radius: 6px; border: 0.5px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; outline: none; }
+${descriptionCSS}
 </style>
 </head>
 <body>
 <h1>${axHomeLink}2D Response Surface</h1>
 <p class="subtitle" id="subtitle">Load a fixture JSON to visualize GP posterior</p>
+${descriptionPanel(`
+  <p>A heatmap of the GP posterior mean over two input parameters, with all others held fixed. This reveals how pairs of parameters jointly influence the outcome — including interactions that 1D slices can't capture.</p>
+  <p>Color encodes the predicted value (yellow = high, purple = low). Training points are overlaid as dots. A second panel shows the posterior standard deviation — brighter regions indicate higher model uncertainty, suggesting where additional trials would be most informative.</p>
+  <p>The two most important parameters (by kernel lengthscale) are selected by default.</p>
+  <p><b>Interactivity:</b></p>
+  <ul>
+    <li><b>Axis dropdowns</b> — choose which two parameters to plot</li>
+    <li><b>Outcome selector</b> — switch between objectives</li>
+    <li><b>Sliders</b> — adjust held-fixed values for non-plotted parameters</li>
+    <li><b>Pivoting</b> — click a training point to pivot: all sliders snap to that trial's parameter values and the surface redraws around that operating point. Nearby dots stay opaque; distant ones fade based on kernel correlation</li>
+  </ul>`)}
 <div class="controls">
   <label>File: <input type="file" id="fileInput" accept=".json"></label>
   <label>Mode: <select id="modeSelect">

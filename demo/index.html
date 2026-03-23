@@ -43,11 +43,11 @@
 <div class="cards">
   <a class="card" href="slice_plot.html">
     <h2>1D Slice Plots</h2>
-    <p>Posterior mean ± 2σ along each parameter dimension, with observed training points.</p>
+    <p>See how each input affects your outcome. Interact to visually explore the space in one-dimensional slices.</p>
   </a>
   <a class="card" href="response_surface.html">
     <h2>2D Response Surface</h2>
-    <p>Side-by-side heatmaps of posterior mean and predictive std, with axis selectors and dimension sliders.</p>
+    <p>See how two inputs jointly affect your outcome. Interact to visually explore the space in two-dimensional slices.</p>
   </a>
 </div>
 
@@ -55,31 +55,31 @@
 <div class="cards">
   <a class="card" href="cross_validation.html">
     <h2>LOO Cross-Validation</h2>
-    <p>Leave-one-out predicted vs observed with CI whiskers, R², and kernel-distance neighbor highlighting.</p>
+    <p>How well does the model predict the data? See what the model would predict if we didn't observe the data.</p>
   </a>
   <a class="card" href="scatter_plots.html">
     <h2>Scatter Plots</h2>
-    <p>Observed vs predicted, in-sample effects, Pareto frontier, and generic scatter with NN highlighting.</p>
+    <p>An overview of generic scatterplots available in ax-js.</p>
   </a>
   <a class="card" href="feature_importance.html">
     <h2>Feature Importance</h2>
-    <p>Dimension importance derived from kernel lengthscales, per outcome.</p>
+    <p>Which parameters matter most? Separates direct effects from interactions with other parameters.</p>
   </a>
   <a class="card" href="optimization_trace.html">
     <h2>Optimization Trace</h2>
-    <p>Trial progression with running best-so-far overlay.</p>
+    <p>Is the optimizer making progress? Shows each trial's outcome with a running best-so-far line.</p>
   </a>
 </div>
 
 <div class="section">Multi-Objective</div>
 <div class="cards">
+  <a class="card" href="ax_explorer.html">
+    <h2>Ax Explorer</h2>
+    <p>Understand everything there is to know about how your inputs affect tradeoffs in your system.</p>
+  </a>
   <a class="card" href="radar.html">
     <h2>Multi-Objective Radar</h2>
     <p>Radar chart for constrained multi-objective problems — objectives, constraints, feasibility.</p>
-  </a>
-  <a class="card" href="ax_cockpit.html">
-    <h2>Ax Cockpit</h2>
-    <p>Interactively explore many-objective tradeoffs and manually tune candidates.</p>
   </a>
 </div>
 
@@ -96,11 +96,11 @@
 <div class="cards">
   <a class="card" href="bayesian_optimization.html">
     <h2>Live Bayesian Optimization</h2>
-    <p>Real-time BO loop — watch acquisition function optimization and GP updates on 2D test functions.</p>
+    <p>Watch optimization happen in real time — the model updates, picks the next point, and the surface evolves.</p>
   </a>
   <a class="card" href="pbo.html">
-    <h2>Preferential BO (BOPE)</h2>
-    <p>Learn latent utility from pairwise comparisons — client-side Laplace GP with EUBO acquisition.</p>
+    <h2>Preferential BO (PBO)</h2>
+    <p>Use Bayesian optimization to learn your preferences.</p>
   </a>
 </div>
 </body>

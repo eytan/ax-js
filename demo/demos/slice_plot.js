@@ -1,4 +1,4 @@
-import { libraryScript, vizScript, fixtureScript, hartmannMixedFixture, axHomeLink, axFavicon } from '../shared.js';
+import { libraryScript, vizScript, fixtureScript, hartmannMixedFixture, axHomeLink, axFavicon , descriptionCSS, descriptionPanel } from '../shared.js';
 
 export default function() {
 return `<!DOCTYPE html>
@@ -18,11 +18,22 @@ ${axFavicon}
   label { font-size: 13px; color: #555; }
   select, input[type=file] { font-size: 13px; padding: 5px 10px;
     border-radius: 6px; border: 0.5px solid #d0d0d0; background: #fff; color: #333; cursor: pointer; outline: none; }
+${descriptionCSS}
 </style>
 </head>
 <body>
 <h1>${axHomeLink}Ax-Style 1D Slice Plots</h1>
 <p class="subtitle" id="subtitle">Load a fixture JSON to visualize GP posterior slices</p>
+${descriptionPanel(`
+  <p>Each subplot shows the GP posterior prediction (mean ± confidence band) as a single parameter varies, with all other parameters held fixed. Parameters are sorted by <b>feature importance</b> (shorter kernel lengthscale = more important).</p>
+  <p>The blue curve is the posterior mean. The shaded band is the 95% CI. Training points are shown as dots — hover to highlight nearest neighbors across subplots.</p>
+  <p><b>Interactivity:</b></p>
+  <ul>
+    <li><b>Outcome selector</b> — switch between objectives</li>
+    <li><b>Sliders</b> — adjust "held fixed" values for other parameters</li>
+    <li><b>Pivoting</b> — click the mean curve to set that parameter's value in all other subplots, exploring the response surface from that operating point. Dot opacity reflects kernel correlation (more distant = more transparent).</li>
+    <li><b>Training dots</b> — click to snap all sliders to that trial's parameter values</li>
+  </ul>`)}
 <div class="controls">
   <label>Fixture: <input type="file" id="fileInput" accept=".json"></label>
   <label>Mode: <select id="modeSelect">

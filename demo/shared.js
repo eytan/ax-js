@@ -18,7 +18,7 @@ export const hartmannMixedFixture = readFileSync(join(root, 'test/fixtures/hartm
 export const penicillinFixture = readFileSync(join(root, 'test/fixtures/penicillin_modellist.json'), 'utf8');
 export const branincurrinFixture = readFileSync(join(root, 'test/fixtures/branincurrin_modellist.json'), 'utf8');
 export const vsipFixture = readFileSync(join(root, 'test/fixtures/vsip_modellist.json'), 'utf8');
-export const cockpitFixture = readFileSync(join(root, 'test/fixtures/cockpit_vsip.json'), 'utf8');
+export const cockpitFixture = readFileSync(join(root, 'test/fixtures/explorer_vsip.json'), 'utf8');
 
 /** Inline the main ax-js library. Exposes Ax.Predictor, Ax.loadModel, etc. */
 export function libraryScript() {
@@ -32,6 +32,22 @@ export function vizScript() {
 
 export function fixtureScript(varName, json) {
   return `<script>\nvar ${varName} = ${json};\n</script>`;
+}
+
+// Description panel CSS + helper
+export const descriptionCSS = `
+  details.description { font-size: 13px; color: #555; line-height: 1.6; max-width: 720px; margin-bottom: 16px; }
+  details.description summary { cursor: pointer; color: #888; font-size: 12px; }
+  details.description p { margin: 8px 0; }
+  details.description ul { margin: 4px 0 4px 20px; }
+  details.description li { margin: 3px 0; }
+  details.description b { color: #333; }`;
+
+export function descriptionPanel(content, { open = true, summary = 'About this plot' } = {}) {
+  return `<details class="description"${open ? ' open' : ''}>
+  <summary>${summary}</summary>
+  ${content}
+</details>`;
 }
 
 // Inline Ax logo SVG (links back to index)

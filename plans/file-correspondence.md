@@ -112,7 +112,7 @@ Cross-references: [docs/developer-guide.md](../docs/developer-guide.md),
 | (integration: all models) | `test/integration/botorch_parity.test.ts` |
 | (integration: predictor) | `test/integration/predictor_parity.test.ts` |
 | (integration: relativize) | `test/integration/relativize_parity.test.ts` |
-| (integration: cockpit) | `test/integration/cockpit_metadata.test.ts` |
+| (integration: explorer) | `test/integration/explorer_metadata.test.ts` |
 | (smoke: public API) | `test/api_smoke.test.ts` |
 
 ## 7. Acquisition Functions (Experimental)

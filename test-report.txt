@@ -10,7 +10,7 @@ Category                         Tests  Status
 BoTorch Parity                     139  139 passed
 Ax-Level Parity                     44  44 passed
 Relativization                      52  52 passed
-Cockpit Metadata                    10  10 passed
+Explorer Metadata                   10  10 passed
 Predictor                           25  25 passed
 API Smoke Tests                      7  7 passed
 Kernels                             38  38 passed
@@ -42,8 +42,8 @@ Detailed Breakdown
   5/5  covariance: EnsembleGP (SAAS)
   6/6  relativize parity with Ax
 
-[Cockpit Metadata]
-  10/10  cockpit fixture metadata
+[Explorer Metadata]
+  10/10  explorer fixture metadata
 
 [Predictor]
   25/25  Predictor
@@ -114,7 +114,7 @@ Detailed Breakdown
   4/4  logNormalCdf
 
 [Other]
-  18/18  cockpit data layer
+  18/18  explorer data layer
   5/5  buildMetricConfigs
   7/7  haltonSequence
   12/12  computeSobolIndices

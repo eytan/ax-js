@@ -2110,8 +2110,8 @@
         }
       ]
     },
-    "name": "cockpit_vsip",
-    "description": "Cockpit: VSIP 9-outcome MOO, 12 Sobol + 8 qEHVI + 5 candidates",
+    "name": "explorer_vsip",
+    "description": "Explorer: VSIP 9-outcome MOO, 12 Sobol + 8 qEHVI + 5 candidates",
     "outcome_names": [
       "weight",
       "acceleration",
@@ -3332,7 +3332,7 @@
       "generated_at": "2026-03-20T21:21:07.609060+00:00",
       "seed": 79,
       "benchmark": "VSIP",
-      "cockpit": true
+      "explorer": true
     },
     "test_points": [
       [

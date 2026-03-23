@@ -687,9 +687,9 @@ FIXTURE_SPECS = [
         objectives=[{"name": "y", "minimize": True}],
         description="TrajectoryPlanning: 30D, high-dimensional single objective",
     ),
-    # 46. Cockpit: multi-batch MOO with observations + candidates metadata
+    # 46. Explorer: multi-batch MOO with observations + candidates metadata
     FixtureSpec(
-        name="cockpit_c2dtlz2",
+        name="explorer_c2dtlz2",
         benchmark="C2DTLZ2",
         model_class="ModelListGP",
         n_train=13,  # 8 Sobol + 5 qEHVI (completed)
@@ -710,11 +710,11 @@ FIXTURE_SPECS = [
             {"name": "f1", "bound": 1.1, "op": "LEQ"},
         ],
         status_quo="center",
-        description="Cockpit: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates",
+        description="Explorer: C2DTLZ2 multi-batch MOO, 8 Sobol + 5 qEHVI + 5 candidates",
     ),
-    # 47. Cockpit: VSIP 9-outcome MOO with observations + candidates
+    # 47. Explorer: VSIP 9-outcome MOO with observations + candidates
     FixtureSpec(
-        name="cockpit_vsip",
+        name="explorer_vsip",
         benchmark="VSIP",
         model_class="ModelListGP",
         n_train=20,  # 12 Sobol + 8 qEHVI
@@ -742,7 +742,7 @@ FIXTURE_SPECS = [
             {"name": "intrusion", "bound": 11.0, "op": "LEQ"},
         ],
         status_quo="center",
-        description="Cockpit: VSIP 9-outcome MOO, 12 Sobol + 8 qEHVI + 5 candidates",
+        description="Explorer: VSIP 9-outcome MOO, 12 Sobol + 8 qEHVI + 5 candidates",
     ),
 ]
 
@@ -751,9 +751,9 @@ FIXTURE_SPECS = [
 
 def _generate_fixture(spec: FixtureSpec, benchmarks: dict) -> dict:
     """Generate a single fixture from spec, dispatching to the appropriate generator."""
-    if spec.ax_level and spec.name.startswith("cockpit_"):
-        from generators.cockpit import generate_cockpit_fixture
-        return generate_cockpit_fixture(spec, benchmarks)
+    if spec.ax_level and spec.name.startswith("explorer_"):
+        from generators.explorer import generate_explorer_fixture
+        return generate_explorer_fixture(spec, benchmarks)
     if spec.ax_level:
         return generate_ax_level_fixture(spec, benchmarks)
     dispatch = {
